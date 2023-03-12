@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use std::{str::FromStr, ops::Range};
+
+use textwrap;
 use unic_segment::Graphemes;
 
 enum DisplayMode {
@@ -16,6 +19,7 @@ struct Buffer {
     cursor: DocPos,
     top: DocPos,
     mode: DisplayMode,
+    wrapping: Wrapping,
 }
 
 trait RenderedDyn {
@@ -26,20 +30,70 @@ trait RenderedAbs {
     fn render(&self, d: String) -> String;
 }
 
+impl Buffer {
+    fn line_range<'a>(&'a self, r: Range<usize>) -> impl Iterator<Item = &'a str> {
+        self.data.lines().skip(r.start).take(r.len())
+    }
+
+    fn line_vis(&self, h: usize) -> Range<usize> {
+        self.top.line..(self.top.line + h)
+    }
+}
+
 impl RenderedDyn for Buffer {
     fn render(&self, w: usize, h: usize) -> String {
-        String::from_iter(self.data.lines().skip(self.top.line).take(h).map(|x| {
-            let (li, s): (Vec<usize>, String) = Graphemes::new(x).take(w).enumerate().unzip();
-            let l = *li.last().unwrap_or(&0);
-            let pad = " ".repeat(w - l - 1);
-            format!("{}{}\n", s, pad)
-        }))
+        match self.wrapping {
+            Wrapping::None => {
+                self.line_range(self.line_vis(h)).map(|x| fit_line(x, w)).collect::<Vec<_>>().join("\n")
+            }
+            Wrapping::Character => 
+                self.line_range(self.line_vis(h))
+                    .flat_map(|x| {
+                        Graphemes::new(x)
+                            .collect::<Vec<_>>()
+                            .chunks(w)
+                            .map(|l| l.to_owned().into_iter().collect::<String>())
+                            .collect::<Vec<_>>()
+                    })
+                    .take(h)
+                    .map(|x| {
+                        fit_line(&x, w)
+                    }).collect::<Vec<_>>().join("\n"),
+            Wrapping::Word => textwrap::wrap(
+                &self
+                    .data
+                    .lines()
+                    .skip(self.top.line)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                w
+            )
+            .into_iter()
+            .take(h)
+            .map(|x| fit_line(&x, w))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        }
     }
+}
+
+
+fn fit_line(s: &str, w: usize) -> String {
+    let mut v: Vec<_> = Graphemes::new(s).take(w).collect();
+    let l = v.len();
+    v.extend([" "].iter().cycle().take( 0isize.max(w as isize - l as isize) as usize));
+    v.join("")
 }
 
 enum WindowBorder {
     Simple,
     None,
+}
+
+enum Wrapping {
+    None,
+    Word,
+    Character,
 }
 
 struct Window {
@@ -75,7 +129,7 @@ impl Window {
             .chain(b.lines().map(|x| format!("|{}|", x)))
             .chain(cap.lines().map(|x| x.to_string()))
             .collect::<Vec<_>>()
-            .join("\n")
+                            .join("\n")
     }
 }
 
@@ -121,12 +175,14 @@ fn main() {
         cursor: DocPos { line: 18, col: 9 },
         top: DocPos { line: 7, col: 0 },
         mode: DisplayMode::Ascii,
+        wrapping: Wrapping::None,
     };
     let b2 = Buffer {
-        data: include_str!("./crossbox.txt").to_owned(),
-        cursor: DocPos { line: 18, col: 9 },
+        data: include_str!("./passage.txt").to_owned(),
+        cursor: DocPos { line: 0, col: 0 },
         top: DocPos { line: 0, col: 0 },
         mode: DisplayMode::Ascii,
+        wrapping: Wrapping::Word,
     };
 
     let win1 = Window {
@@ -137,8 +193,8 @@ fn main() {
     };
 
     let win2 = Window {
-        topleft: DocPos { line: 0, col: 12 },
-        botrght: DocPos { line: 15, col: 24 },
+        topleft: DocPos { line: 0, col: 0 },
+        botrght: DocPos { line: 30, col: 60 },
         border: WindowBorder::Simple,
         buf: b2,
     };
@@ -146,7 +202,7 @@ fn main() {
     let wrk = Workspace {
         w: 60,
         h: 30,
-        winv: vec![win2, win1],
+        winv: vec![win2],
     };
 
     println!("{}", wrk.render(String::new()));
