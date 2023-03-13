@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::Wrapping;
-use std::{fmt::Display, ops::Range};
+use std::{borrow::Cow, fmt::Display, ops::Range};
 use textwrap;
 use unic_segment::{GraphemeIndices, Graphemes};
 
@@ -9,6 +9,7 @@ enum DisplayMode {
     Ascii,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct DocPos {
     line: usize,
     col: usize,
@@ -23,22 +24,47 @@ impl From<TermPos> for DocPos {
     }
 }
 
+/// 0-indexed terminal position in the form of (line, col)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TermPos(u16, u16);
 
+#[derive(Clone, Copy, Debug)]
 struct WinSpan {
     tl: TermPos,
     br: TermPos,
 }
 
 impl WinSpan {
-    fn hspan(&self) -> Range<u16> {
+    fn vspan(&self) -> Range<u16> {
         self.tl.0..self.br.0
     }
-    fn vspan(&self) -> Range<u16> {
+    fn hspan(&self) -> Range<u16> {
         self.tl.1..self.br.1
     }
     fn contains(&self, pos: &TermPos) -> bool {
-        self.hspan().contains(&pos.0) && self.vspan().contains(&pos.1)
+        self.hspan().contains(&pos.1) && self.vspan().contains(&pos.0)
+    }
+    fn width(&self) -> u16 {
+        self.hspan().len() as u16
+    }
+    fn height(&self) -> u16 {
+        self.vspan().len() as u16
+    }
+    fn all(&self) -> impl Iterator<Item = TermPos> + '_ {
+        self.vspan()
+            .flat_map(move |r| self.hspan().map(move |c| TermPos(r, c)))
+    }
+    fn from_hvspan(hspan: Range<u16>, vspan: Range<u16>) -> Self {
+        Self {
+            tl: TermPos(vspan.start, hspan.start),
+            br: TermPos(vspan.end, hspan.end),
+        }
+    }
+    fn from_size(w: u16, h: u16) -> Self {
+        Self {
+            tl: TermPos(0, 0),
+            br: TermPos(h, w),
+        }
     }
 }
 
@@ -164,6 +190,79 @@ struct Window {
     span: WinSpan,
 }
 
+impl Window {
+    fn render_cache(&mut self) {
+        let w = self.span.width();
+        let h = self.span.height();
+        self.buf.render_cache(w, h);
+    }
+
+    fn render(&self) -> DisplayCache {
+        let w = self.span.width();
+        let h = self.span.height();
+        self.buf.render(w, h)
+    }
+
+    fn new(span: WinSpan) -> Self {
+        Self {
+            buf: Buffer::new([].to_vec()),
+            span,
+        }
+    }
+}
+
+impl Display for Window {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.render().fmt(f)
+    }
+}
+
+struct Workspace {
+    winv: Vec<Window>,
+    span: WinSpan,
+}
+
+impl Workspace {
+    fn new(span: WinSpan) -> Self {
+        let winv = vec![];
+        Self { winv, span }
+    }
+
+    fn add_window(&mut self, win: Window) {
+        self.winv.push(win);
+    }
+}
+
+impl Display for Workspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s: Vec<_> = self.winv.iter().map(|x| x.render().to_string()).collect();
+        let g: Vec<_> = s
+            .iter()
+            .map(|x| Graphemes::new(x).filter(|x| x != &"\n").collect::<Vec<_>>())
+            .collect();
+        let mut v: Vec<_> = g.iter().map(|x| x.iter()).collect();
+
+        for row in self.span.vspan() {
+            for col in self.span.hspan() {
+                let pos = TermPos(row, col);
+                let c = v
+                    .iter_mut()
+                    .enumerate()
+                    .filter(|(i, _)| self.winv[*i].span.contains(&pos))
+                    .map(|(_, it)| it.next().unwrap_or(&" "))
+                    .last()
+                    .unwrap_or(&" ");
+                write!(f, "{}", c)?
+            }
+
+            if row + 1 != self.span.br.0 {
+                write!(f, "\n")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Buffer {
     raw: Vec<u8>,
     cursor: DocPos,
@@ -198,7 +297,12 @@ impl Buffer {
         }
     }
 
-    fn render(&mut self, w: u16, h: u16) {
+    fn render(&self, w: u16, h: u16) -> DisplayCache {
+        let line = self.top.line.min(self.loff.len() - 1);
+        DisplayCache::new(&self.raw, self.loff[line], w as usize, h as usize)
+    }
+
+    fn render_cache(&mut self, w: u16, h: u16) {
         let line = self.top.line.min(self.loff.len() - 1);
         self.cache = Some(DisplayCache::new(
             &self.raw,
@@ -230,7 +334,7 @@ mod test {
     fn basic_box_render_invariant() {
         let truth = include_str!("crossbox.txt");
         let mut test = Buffer::new(include_bytes!("crossbox.txt").to_vec());
-        test.render(31, 31);
+        test.render_cache(31, 31);
         assert_eq!(truth.trim_end().to_owned(), test.to_string());
     }
 
@@ -239,7 +343,7 @@ mod test {
         let init = "1\n22\n333\n4444\n";
         let truth = "1   \n22  \n333 \n4444";
         let mut test = Buffer::new(init.as_bytes().to_vec());
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
 
@@ -248,7 +352,7 @@ mod test {
         let init = "1\n22\n333";
         let truth = "1   \n22  \n333 \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
 
@@ -256,10 +360,9 @@ mod test {
     fn buffer_empty() {
         let truth = "    \n    \n    \n    ";
         let mut test = Buffer::new([].to_vec());
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
-
 
     #[test]
     fn scroll_abs_one() {
@@ -267,7 +370,7 @@ mod test {
         let truth = "22  \n333 \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(1);
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
 
@@ -277,7 +380,7 @@ mod test {
         let truth = "333 \n    \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(2);
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
 
@@ -287,8 +390,103 @@ mod test {
         let truth = "333 \n    \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(12);
-        test.render(4, 4);
+        test.render_cache(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
 
+    #[test]
+    fn windspan_no_mixup_dim() {
+        let w = 8;
+        let h = 16;
+        let pos_in = TermPos(12, 4);
+        let winspan = WinSpan::from_size(w, h);
+        assert!(winspan.contains(&pos_in));
+        assert_eq!(winspan.hspan(), 0..w);
+        assert_eq!(winspan.vspan(), 0..h);
+        assert_eq!(DocPos::from(pos_in).line, 12);
+        assert_eq!(DocPos::from(pos_in).col, 4);
+    }
+
+    #[test]
+    fn winspan_all() {
+        let span = WinSpan::from_size(3, 2);
+        let mut it = span.all();
+        assert_eq!(it.next(), Some(TermPos(0, 0)));
+        assert_eq!(it.next(), Some(TermPos(0, 1)));
+        assert_eq!(it.next(), Some(TermPos(0, 2)));
+        assert_eq!(it.next(), Some(TermPos(1, 0)));
+        assert_eq!(it.next(), Some(TermPos(1, 1)));
+        assert_eq!(it.next(), Some(TermPos(1, 2)));
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn display_workspace_empty() {
+        let truth = "    \n    \n    \n    ";
+        let span = WinSpan::from_size(4, 4);
+        let wrk = Workspace::new(span);
+        let real = truth.to_string();
+        assert_eq!(truth, real);
+    }
+
+    #[test]
+    fn display_workspace_one_window() {
+        let truth = " 12 \n 34 \n    \n    ";
+        let wrkspan = WinSpan::from_size(4, 4);
+        let winspan = WinSpan::from_hvspan(1..3, 0..2);
+        let mut win = Window::new(winspan);
+        win.buf = Buffer::new("12\n34".into());
+        assert_eq!("12\n34", win.to_string());
+        let mut wrk = Workspace::new(wrkspan);
+        wrk.add_window(win);
+        assert_eq!(truth, wrk.to_string());
+    }
+
+    #[test]
+    fn display_workspace_two_window() {
+        let truth = " 12 \n 356\n  78\n    ";
+        let wrkspan = WinSpan::from_size(4, 4);
+
+        let winspan1 = WinSpan::from_hvspan(1..3, 0..2);
+        let mut win1 = Window::new(winspan1);
+        win1.buf = Buffer::new("12\n34".into());
+        assert_eq!("12\n34", win1.to_string());
+
+        let winspan2 = WinSpan::from_hvspan(2..4, 1..3);
+        let mut win2 = Window::new(winspan2);
+        win2.buf = Buffer::new("56\n78".into());
+        assert_eq!("56\n78", win2.to_string());
+
+
+        let mut wrk = Workspace::new(wrkspan);
+        wrk.add_window(win1);
+        wrk.add_window(win2);
+        assert_eq!(truth, wrk.to_string());
+    }
+
+    #[test]
+    fn display_workspace_full_window() {
+        let truth = "ABCD\nEFGH\nIJKL\nMNOP";
+        let wrkspan = WinSpan::from_size(4, 4);
+        let winspan = WinSpan::from_hvspan(0..4, 0..4);
+        let mut win = Window::new(winspan);
+        win.buf = Buffer::new("ABCD\nEFGH\nIJKL\nMNOP".into());
+        assert_eq!("ABCD\nEFGH\nIJKL\nMNOP", win.to_string());
+        let mut wrk = Workspace::new(wrkspan);
+        wrk.add_window(win);
+        assert_eq!(truth, wrk.to_string());
+    }
+
+    #[test]
+    fn display_workspace_overfull_window() {
+        let truth = "ABCD\nEFGH\nIJKL\nMNOP";
+        let wrkspan = WinSpan::from_size(4, 4);
+        let winspan = WinSpan::from_hvspan(0..4, 0..4);
+        let mut win = Window::new(winspan);
+        win.buf = Buffer::new("ABCD\nEFGH\nIJKL\nMNOP\nAAAAAAAAAAAAAAAAAAAA".into());
+        assert_eq!("ABCD\nEFGH\nIJKL\nMNOP", win.to_string());
+        let mut wrk = Workspace::new(wrkspan);
+        wrk.add_window(win);
+        assert_eq!(truth, wrk.to_string());
+    }
 }
