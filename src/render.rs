@@ -37,6 +37,9 @@ impl WinSpan {
     fn vspan(&self) -> Range<u16> {
         self.tl.1..self.br.1
     }
+    fn contains(&self, pos: &TermPos) -> bool {
+        self.hspan().contains(&pos.0) && self.vspan().contains(&pos.1)
+    }
 }
 
 struct DisplayCache {
@@ -57,7 +60,7 @@ impl DisplayCache {
     fn new(raw: &[u8], start: usize, w: usize, h: usize) -> Self {
         let cover = start..(start + raw.len());
         let cache = {
-            let decoded = decode(raw);
+            let decoded = decode(&raw[start..]);
             let mut v = textwrap::wrap(&decoded, w);
             v.resize(h, "".into());
             v.into_iter()
@@ -175,7 +178,15 @@ impl Buffer {
         let cursor = DocPos { line: 0, col: 0 };
         let cache = None;
         let top = DocPos { line: 0, col: 0 };
-        let loff = vec![];
+        let loff = [0]
+            .into_iter()
+            .chain(
+                String::from_utf8_lossy(&raw)
+                    .char_indices()
+                    .filter(|(_, c)| *c == '\n')
+                    .map(|(i, _)| i + 1),
+            )
+            .collect();
         let wrapping = Wrapping::Word;
         Self {
             raw,
@@ -188,12 +199,17 @@ impl Buffer {
     }
 
     fn render(&mut self, w: u16, h: u16) {
+        let line = self.top.line.min(self.loff.len() - 1);
         self.cache = Some(DisplayCache::new(
             &self.raw,
-            self.loff[self.top.line],
+            self.loff[line],
             w as usize,
             h as usize,
         ));
+    }
+
+    fn scroll_abs(&mut self, newl: usize) {
+        self.top.line = newl;
     }
 }
 
@@ -201,17 +217,9 @@ impl Display for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.cache {
             Some(cache) => cache.fmt(f),
-            None => panic!("display unrendered buffer"),
+            None => Err(std::fmt::Error),
         }
     }
-}
-
-trait RenderedDyn {
-    fn render(&self, w: usize, h: usize) -> String;
-}
-
-trait RenderedAbs {
-    fn render(&self, d: String) -> String;
 }
 
 #[cfg(test)]
@@ -243,4 +251,44 @@ mod test {
         test.render(4, 4);
         assert_eq!(truth.to_owned(), test.to_string());
     }
+
+    #[test]
+    fn buffer_empty() {
+        let truth = "    \n    \n    \n    ";
+        let mut test = Buffer::new([].to_vec());
+        test.render(4, 4);
+        assert_eq!(truth.to_owned(), test.to_string());
+    }
+
+
+    #[test]
+    fn scroll_abs_one() {
+        let init = "1\n22\n333";
+        let truth = "22  \n333 \n    \n    ";
+        let mut test = Buffer::new(init.as_bytes().to_vec());
+        test.scroll_abs(1);
+        test.render(4, 4);
+        assert_eq!(truth.to_owned(), test.to_string());
+    }
+
+    #[test]
+    fn scroll_abs_end() {
+        let init = "1\n22\n333";
+        let truth = "333 \n    \n    \n    ";
+        let mut test = Buffer::new(init.as_bytes().to_vec());
+        test.scroll_abs(2);
+        test.render(4, 4);
+        assert_eq!(truth.to_owned(), test.to_string());
+    }
+
+    #[test]
+    fn scroll_abs_past_end() {
+        let init = "1\n22\n333";
+        let truth = "333 \n    \n    \n    ";
+        let mut test = Buffer::new(init.as_bytes().to_vec());
+        test.scroll_abs(12);
+        test.render(4, 4);
+        assert_eq!(truth.to_owned(), test.to_string());
+    }
+
 }
