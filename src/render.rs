@@ -2,7 +2,7 @@
 
 use crate::Wrapping;
 use std::{borrow::Cow, fmt::Display, ops::Range};
-use textwrap;
+use textwrap::{self, wrap};
 use unic_segment::{GraphemeIndices, Graphemes};
 
 enum DisplayMode {
@@ -160,9 +160,16 @@ struct Window {
 }
 
 impl Window {
-    fn render(&mut self) {
+    fn render(&self) -> Vec<Cell> {
         let w = self.span.width();
         let h = self.span.height();
+        self.buf.render_cells(w as usize, h as usize).into_iter().map(|x| x.into()).collect()
+    }
+
+    fn render_cache(&mut self) {
+        let w = self.span.width();
+        let h = self.span.height();
+        self.screen_buf = self.buf.render_cells(w as usize, h as usize).into_iter().map(|x| x.into()).collect();
     }
 
     fn new(span: WinSpan) -> Self {
@@ -172,6 +179,14 @@ impl Window {
             screen_buf: vec![],
             selected: false
         }
+    }
+}
+
+impl Display for Window {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let w = self.span.width();
+        let h = self.span.height();
+        self.buf.render(w as usize, h as usize).fmt(f)
     }
 }
 
@@ -201,14 +216,39 @@ enum CellCont {
 }
 
 impl CellCont {
-    fn () {
-        
+    fn from_str(s: &str) -> Vec<Self> {
+        Graphemes::new(&escape_noprint(s)).map(|x| match x.chars().count() {
+            0 => panic!("0 length grapheme: {}", x),
+            1 => CellCont::Char(x.chars().next().expect("length 1 is nonempty")),
+            _ => CellCont::Long(x.into())
+        }).collect()
+    }
+}
+
+impl From<CellCont> for Cell {
+    fn from(value: CellCont) -> Self {
+        Cell { style: CellStyle::new(), content: value }
+    }
+}
+
+impl Display for CellCont {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CellCont::Char(c) => c.fmt(f),
+            CellCont::Long(s) => s.fmt(f)
+        }
     }
 }
 
 struct Cell {
     style: CellStyle,
     content: CellCont
+}
+
+impl Display for Cell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.content.fmt(f)
+    }
 }
 
 struct EscapedChars<'a> {
@@ -272,11 +312,6 @@ impl Iterator for EscapedChars<'_> {
     }
 }
 
-impl Display for Window {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.render().fmt(f)
-    }
-}
 
 struct Workspace {
     winv: Vec<Window>,
@@ -294,15 +329,14 @@ impl Workspace {
     fn add_window(&mut self, win: Window) {
         self.winv.push(win);
     }
+
+    fn render(&mut self) {
+        self.winv.iter_mut().map(|x| x.render_cache()).last();
+    }
 }
 
 impl Display for Workspace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s: Vec<_> = self.winv.iter().map(|x| x.render().to_string()).collect();
-        let g: Vec<_> = s
-            .iter()
-            .map(|x| Graphemes::new(x).filter(|x| x != &"\n").collect::<Vec<_>>())
-            .collect();
         let mut v: Vec<_> = g.iter().map(|x| x.iter()).collect();
 
         for row in self.span.vspan() {
@@ -340,7 +374,7 @@ impl Buffer {
         let top = DocPos { line: 0, col: 0 };
 
         // we can do this because ascii does not exist in unicode
-        let loff = raw.iter().enumerate().filter(|(_, b)| **b == 0x0A).map(|(i, _)| i).collect();
+        let loff = [0].into_iter().chain(raw.iter().enumerate().filter(|(_, b)| **b == 0x0A).map(|(i, _)| i)).collect();
         let wrapping = Wrapping::Word;
         Self {
             raw,
@@ -351,8 +385,17 @@ impl Buffer {
         }
     }
 
-    fn render_iter(&self, w: usize) -> impl Iterator< Item = CellCont > {
-        let idx = self.loff[self.top.line];
+    fn render(&self, w: usize, h: usize) -> String {
+        let h_efcv = h.min(self.loff.len());
+        let idxr = self.loff[self.top.line]..self.loff[self.top.line + h_efcv];
+        wrap(&decode(&self.raw[idxr]), w).into_iter().map(|x| format!("{:<w$}", x)).collect::<Vec<_>>().join("\n")
+    }
+
+    fn render_cells(&self, w: usize, h: usize) -> Vec<CellCont> {
+        let h_efcv = h.min(self.loff.len());
+        let idxr = self.loff[self.top.line]..self.loff[self.top.line + h_efcv];
+        wrap(&decode(&self.raw[idxr]), w).into_iter().flat_map(|x| CellCont::from_str(&format!("{:<w$}", x)).into_iter())
+        .collect()
     }
 
     fn scroll_abs(&mut self, newl: usize) {
@@ -369,8 +412,7 @@ mod test {
     fn basic_box_render_invariant() {
         let truth = include_str!("crossbox.txt");
         let mut test = Buffer::new(include_bytes!("crossbox.txt").to_vec());
-        test.render_cache(31, 31);
-        assert_eq!(truth.trim_end().to_owned(), test.to_string());
+        assert_eq!(truth.trim_end().to_owned(), test.render(31, 31));
     }
 
     #[test]
@@ -378,8 +420,7 @@ mod test {
         let init = "1\n22\n333\n4444\n";
         let truth = "1   \n22  \n333 \n4444";
         let mut test = Buffer::new(init.as_bytes().to_vec());
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
@@ -387,16 +428,14 @@ mod test {
         let init = "1\n22\n333";
         let truth = "1   \n22  \n333 \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
     fn buffer_empty() {
         let truth = "    \n    \n    \n    ";
         let mut test = Buffer::new([].to_vec());
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
@@ -405,8 +444,7 @@ mod test {
         let truth = "22  \n333 \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(1);
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
@@ -415,8 +453,7 @@ mod test {
         let truth = "333 \n    \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(2);
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
@@ -425,8 +462,7 @@ mod test {
         let truth = "333 \n    \n    \n    ";
         let mut test = Buffer::new(init.as_bytes().to_vec());
         test.scroll_abs(12);
-        test.render_cache(4, 4);
-        assert_eq!(truth.to_owned(), test.to_string());
+        assert_eq!(truth.to_owned(), test.render(4, 4));
     }
 
     #[test]
