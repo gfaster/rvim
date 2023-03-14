@@ -68,41 +68,6 @@ impl WinSpan {
     }
 }
 
-struct DisplayCache {
-    /// Byte range this covers in original str
-    cover: Range<usize>,
-
-    w: usize,
-    h: usize,
-
-    cache: String,
-}
-
-impl DisplayCache {
-    fn lines<'a>(&'a self) -> impl Iterator<Item = &'a str> {
-        self.cache.lines()
-    }
-
-    fn new(raw: &[u8], start: usize, w: usize, h: usize) -> Self {
-        let cover = start..(start + raw.len());
-        let cache = {
-            let decoded = decode(&raw[start..]);
-            let mut v = textwrap::wrap(&decoded, w);
-            v.resize(h, "".into());
-            v.into_iter()
-                .map(|x| format!("{:<w$}", x))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        Self { cover, cache, w, h }
-    }
-}
-
-impl Display for DisplayCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.cache.fmt(f)
-    }
-}
 
 /// Decode byte slices to valid utf8
 ///
@@ -140,18 +105,20 @@ pub fn decode(s: &[u8]) -> String {
 }
 
 /// Escape non-printable characters
-/// Does not escape whitespace characters
+/// Does not escape newlines
 ///
 /// # Examples
 /// ```
 /// # use edit::render::escape_noprint;
 /// let s = "\t\x1b]0mhello,\0world\n";
-/// assert_eq!(escape_noprint(s), "\t<0x1b>]0mhello,<0x00>world\n")
+/// assert_eq!(escape_noprint(s), "    <0x1b>]0mhello,<0x00>world\n")
 pub fn escape_noprint(s: &str) -> String {
     s.chars()
         .map(|x| {
             if !x.is_whitespace() && x.is_control() {
                 escape_char(x as u32)
+            } else if x == '\t' {
+                "    ".into()
             } else {
                 x.into()
             }
@@ -188,25 +155,119 @@ pub fn escape_char(c: u32) -> String {
 struct Window {
     buf: Buffer,
     span: WinSpan,
+    screen_buf: Vec<Cell>,
+    selected: bool
 }
 
 impl Window {
-    fn render_cache(&mut self) {
+    fn render(&mut self) {
         let w = self.span.width();
         let h = self.span.height();
-        self.buf.render_cache(w, h);
-    }
-
-    fn render(&self) -> DisplayCache {
-        let w = self.span.width();
-        let h = self.span.height();
-        self.buf.render(w, h)
     }
 
     fn new(span: WinSpan) -> Self {
         Self {
             buf: Buffer::new([].to_vec()),
             span,
+            screen_buf: vec![],
+            selected: false
+        }
+    }
+}
+
+enum Color {
+    Normal,
+    Red
+}
+
+struct CellStyle {
+    fg: Color,
+    bg: Color,
+    bold: bool,
+    italic: bool,
+}
+
+impl CellStyle {
+    fn new() -> Self {
+        CellStyle { fg: Color::Normal, bg: Color::Normal, bold: false, italic: false }
+    }
+}
+
+/// contents of a cell. Needs to be able to accomidate arbitrarily large strings
+/// for a single cell because unicode is hard
+enum CellCont {
+    Char(char),
+    Long(String)
+}
+
+impl CellCont {
+    fn () {
+        
+    }
+}
+
+struct Cell {
+    style: CellStyle,
+    content: CellCont
+}
+
+struct EscapedChars<'a> {
+    idx: usize,
+    raw: &'a [u8],
+    esc: Option<String>
+}
+
+impl EscapedChars<'_> {
+    fn new(raw: &[u8]) -> Self {
+        Self { idx: 0, raw, esc: None }
+    }
+}
+
+impl Iterator for EscapedChars<'_> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(esc) = self.esc {
+            let mut chars = esc.chars();
+            let ret = chars.next()?;
+            if chars.next() == None {
+                self.esc = None;
+            }
+            return Some(ret);
+        }
+        let remain = self.raw.len() as isize - self.idx as isize;
+        if remain <= 0 {
+            return None
+        };
+        let pointlen = self.raw[self.idx].leading_ones();
+        // TODO: turn this into a folding iterator
+        let optc = match pointlen {
+            0 => {
+                self.idx += 1;
+                char::from_u32(self.raw[self.idx] as u32)
+            },
+            2 => {
+                self.idx += 2;
+                char::from_u32((self.raw[self.idx + 1] as u32) << 8 | self.raw[self.idx] as u32)
+            },
+            3 => {
+                self.idx += 3;
+                char::from_u32((self.raw[self.idx + 2] as u32) << 16 | (self.raw[self.idx + 1] as u32) << 8 | self.raw[self.idx] as u32)
+            },
+            4 => {
+                self.idx += 4;
+                char::from_u32((self.raw[self.idx + 3] as u32) << 32 |(self.raw[self.idx + 2] as u32) << 16 | (self.raw[self.idx + 1] as u32) << 8 | self.raw[self.idx] as u32)
+            },
+                _ => None
+        };
+
+        match optc {
+            Some(_) => optc,
+            None => {
+                self.esc = Some(escape_char(self.raw[self.idx] as u32));
+                self.idx += 1;
+                self.next()
+            }
         }
     }
 }
@@ -220,12 +281,14 @@ impl Display for Window {
 struct Workspace {
     winv: Vec<Window>,
     span: WinSpan,
+    focidx: usize
 }
 
 impl Workspace {
     fn new(span: WinSpan) -> Self {
-        let winv = vec![];
-        Self { winv, span }
+        let mut winv = vec![Window::new(span)];
+        winv[0].selected = true;
+        Self { winv, span, focidx: 0 }
     }
 
     fn add_window(&mut self, win: Window) {
@@ -266,7 +329,6 @@ impl Display for Workspace {
 struct Buffer {
     raw: Vec<u8>,
     cursor: DocPos,
-    cache: Option<DisplayCache>,
     top: DocPos,
     loff: Vec<usize>,
     wrapping: Wrapping,
@@ -275,41 +337,22 @@ struct Buffer {
 impl Buffer {
     fn new(raw: Vec<u8>) -> Self {
         let cursor = DocPos { line: 0, col: 0 };
-        let cache = None;
         let top = DocPos { line: 0, col: 0 };
-        let loff = [0]
-            .into_iter()
-            .chain(
-                String::from_utf8_lossy(&raw)
-                    .char_indices()
-                    .filter(|(_, c)| *c == '\n')
-                    .map(|(i, _)| i + 1),
-            )
-            .collect();
+
+        // we can do this because ascii does not exist in unicode
+        let loff = raw.iter().enumerate().filter(|(_, b)| **b == 0x0A).map(|(i, _)| i).collect();
         let wrapping = Wrapping::Word;
         Self {
             raw,
             cursor,
-            cache,
             top,
             wrapping,
             loff,
         }
     }
 
-    fn render(&self, w: u16, h: u16) -> DisplayCache {
-        let line = self.top.line.min(self.loff.len() - 1);
-        DisplayCache::new(&self.raw, self.loff[line], w as usize, h as usize)
-    }
-
-    fn render_cache(&mut self, w: u16, h: u16) {
-        let line = self.top.line.min(self.loff.len() - 1);
-        self.cache = Some(DisplayCache::new(
-            &self.raw,
-            self.loff[line],
-            w as usize,
-            h as usize,
-        ));
+    fn render_iter(&self, w: usize) -> impl Iterator< Item = CellCont > {
+        let idx = self.loff[self.top.line];
     }
 
     fn scroll_abs(&mut self, newl: usize) {
@@ -317,14 +360,6 @@ impl Buffer {
     }
 }
 
-impl Display for Buffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.cache {
-            Some(cache) => cache.fmt(f),
-            None => Err(std::fmt::Error),
-        }
-    }
-}
 
 #[cfg(test)]
 mod test {

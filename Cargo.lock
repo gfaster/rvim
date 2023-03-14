@@ -47,6 +47,7 @@ dependencies = [
  "terminal_size",
  "textwrap",
  "unic-segment",
+ "unicode-width",
 ]
 
 [[package]]
