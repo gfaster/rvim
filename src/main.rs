@@ -2,10 +2,14 @@
 mod render;
 mod buffer;
 
-use nix::sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet};
+use std::sync::atomic::AtomicBool;
+
+use nix::{sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet}, unistd::pause};
 use libc;
 use render::Ctx;
 
+// how I handle the interrupts for now
+static mut PENDING: AtomicBool = AtomicBool::new(false);
 
 fn main() {
 
@@ -17,12 +21,20 @@ fn main() {
     }
 
     let buf = buffer::Buffer::new("src/box2.txt").unwrap();
-    let ctx = Ctx::new(0, buf);
+    let ctx = Ctx::new(libc::STDIN_FILENO, buf);
     ctx.render();
 
     loop {
-        
+        pause();
+        unsafe {
+            if PENDING.load(std::sync::atomic::Ordering::Acquire) {
+                break;
+            }
+        }
     }
+
+    render::term::altbuf_disable();
+    render::term::flush();
 
     // eprintln!("reached end of main loop");
 }
@@ -30,6 +42,7 @@ fn main() {
 extern "C" fn sa_handler(_signum: libc::c_int) {
     // this is honestly terrifying. I love it
     // std::process::Command::new("/usr/bin/reset").spawn().unwrap();
-    render::term::altbuf_disable();
-    std::process::exit(0);
+    unsafe {
+        PENDING = true.into();
+    }
 }
