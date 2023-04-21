@@ -20,7 +20,7 @@ fn main() {
         signal::sigaction(signal::Signal::SIGINT, &sig).unwrap();
     }
 
-    let buf = buffer::Buffer::new("src/box2.txt").unwrap();
+    let buf = buffer::Buffer::new("src/passage.txt").unwrap();
     let ctx = Ctx::new(libc::STDIN_FILENO, buf);
     ctx.render();
 

@@ -1,8 +1,8 @@
 use crate::buffer::*;
 use std::os::unix::io::RawFd;
-use std::ptr::{null, null_mut};
 use nix::sys::termios::{Termios, LocalFlags};
 use nix::sys::termios;
+use textwrap::wrap;
 
 pub mod term {
     use std::io::{self, Write};
@@ -60,8 +60,8 @@ impl Window {
             buf,
             topline: 0,
             cursorpos: TermPos { x: 0, y: 0 },
-            topleft: TermPos { x: 3, y: 0 },
-            botright: TermPos { x: 83, y: 32 },
+            topleft: TermPos { x: 10, y: 5 },
+            botright: TermPos { x: 90, y: 37 },
         }
     }
 
@@ -71,7 +71,8 @@ impl Window {
 
     fn draw(&self) {
         term::rst_cur();
-        self.buf.get_lines(self.topline..(self.topline + (self.botright.y - self.topleft.y) as usize)).enumerate().map(|(i, l)| {
+        self.buf.get_lines(self.topline..(self.topline + (self.botright.y - self.topleft.y) as usize))
+            .flat_map(|x| wrap(x, (self.botright.x - self.topleft.x) as usize)).take((self.botright.y - self.topleft.y) as usize).enumerate().map(|(i, l)| {
             term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
             print!("{l}");
         }).last();
@@ -82,6 +83,7 @@ impl Window {
 
 pub struct Ctx {
     termios: Termios,
+    orig: Termios,
     term: RawFd,
     window: Window,
 }
@@ -91,6 +93,7 @@ impl Ctx {
         term::altbuf_enable();
         term::flush();
         let mut termios = termios::tcgetattr(term).unwrap();
+        let orig = termios.clone();
         termios::cfmakeraw(&mut termios);
         termios.local_flags.remove(LocalFlags::ECHO);
         termios.local_flags.insert(LocalFlags::ISIG);
@@ -101,6 +104,7 @@ impl Ctx {
 
         Self {
             termios, 
+            orig,
             term,
             window
         }
@@ -113,16 +117,7 @@ impl Ctx {
 
 impl Drop for Ctx {
     fn drop(&mut self) {
-        let dft_term: Termios;
-        unsafe {
-            let mut amaster: i32 = 0;
-            let mut aslave: i32 = 0;
-            libc::openpty(&mut amaster, &mut aslave, null_mut(), null(), null());
-            dft_term = termios::tcgetattr(aslave).unwrap();
-            // Do I need to do cleanup?
-        }
-        
-        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &dft_term).unwrap();
+        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap();
     }
 }
 
