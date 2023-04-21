@@ -16,8 +16,8 @@ fn main() {
         signal::sigaction(signal::Signal::SIGINT, &sig).unwrap();
     }
 
-    let buf = buffer::Buffer::new("src/crossbox.txt").unwrap();
-    let ctx = Ctx::new(2, buf);
+    let buf = buffer::Buffer::new("src/box2.txt").unwrap();
+    let ctx = Ctx::new(0, buf);
     ctx.render();
 
     loop {
