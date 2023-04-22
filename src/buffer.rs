@@ -1,30 +1,32 @@
-use std::{ops::Range, collections::BTreeMap};
+use std::{collections::BTreeMap, ops::Range};
 
 pub struct Buffer {
     data: String,
     changes: BTreeMap<usize, String>,
-    lines: Vec<usize>
+    lines: Vec<usize>,
 }
-
 
 impl<'a> Buffer {
     pub fn new(file: &str) -> Result<Self, std::io::Error> {
-        let data = std::fs::read_to_string(file)?; 
+        let data = std::fs::read_to_string(file)?;
         Ok(Self::new_fromstring(data))
     }
 
     pub fn new_fromstring(s: String) -> Self {
         let data = s;
         let changes = BTreeMap::new();
-        let lines = [0].into_iter().chain(data.bytes().enumerate().filter_map(|x| match x.1 {
-            0x0A => Some(x.0 + 1),
-            _ => None
-        })).collect();
+        let lines = [0]
+            .into_iter()
+            .chain(data.bytes().enumerate().filter_map(|x| match x.1 {
+                0x0A => Some(x.0 + 1),
+                _ => None,
+            }))
+            .collect();
 
         Self {
             data,
             lines,
-            changes
+            changes,
         }
     }
 
@@ -58,11 +60,26 @@ impl<'a> Buffer {
 
     pub fn insert_char(&mut self, pos: usize, c: char) {
         if c == '\n' {
-            let start = self.lines.iter().enumerate().rev().find(|(_, i)| **i <= pos).unwrap().0;
+            let start = self
+                .lines
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, i)| **i <= pos)
+                .unwrap()
+                .0;
             self.lines.insert(start + 1, pos);
-            self.lines.iter_mut().skip(start + 1).map(|i| *i+=1).last();
+            self.lines
+                .iter_mut()
+                .skip(start + 1)
+                .map(|i| *i += 1)
+                .last();
         } else {
-            self.lines.iter_mut().skip_while(|i| **i < pos).map(|i| *i+=1).last();
+            self.lines
+                .iter_mut()
+                .skip_while(|i| **i < pos)
+                .map(|i| *i += 1)
+                .last();
         };
         self.data.insert(pos, c);
     }
@@ -72,7 +89,12 @@ impl<'a> Buffer {
     }
 
     pub fn working_linecnt(&self) -> usize {
-        self.lines.len() - if *self.data.as_bytes().last().unwrap_or(&(' ' as u8)) == '\n' as u8 { 1 } else { 0 }
+        self.lines.len()
+            - if *self.data.as_bytes().last().unwrap_or(&(' ' as u8)) == '\n' as u8 {
+                1
+            } else {
+                0
+            }
     }
 }
 
@@ -146,19 +168,19 @@ mod test {
     #[test]
     fn test_get_virt_line() {
         let b = Buffer::new_fromstring("0\n1\n2\n3\n4".to_string());
-        assert_eq!(b.virtual_getline(0), 0); 
-        assert_eq!(b.virtual_getline(1), 2); 
-        assert_eq!(b.virtual_getline(4), 8); 
-        assert_eq!(b.virtual_getline(5), 9); 
+        assert_eq!(b.virtual_getline(0), 0);
+        assert_eq!(b.virtual_getline(1), 2);
+        assert_eq!(b.virtual_getline(4), 8);
+        assert_eq!(b.virtual_getline(5), 9);
     }
 
     #[test]
     fn test_get_virt_line_trailing_lf() {
         let b = Buffer::new_fromstring("0\n1\n2\n3\n4\n".to_string());
-        assert_eq!(b.virtual_getline(0), 0); 
-        assert_eq!(b.virtual_getline(1), 2); 
-        assert_eq!(b.virtual_getline(4), 8); 
-        assert_eq!(b.virtual_getline(5), 10); 
+        assert_eq!(b.virtual_getline(0), 0);
+        assert_eq!(b.virtual_getline(1), 2);
+        assert_eq!(b.virtual_getline(4), 8);
+        assert_eq!(b.virtual_getline(5), 10);
     }
 
     #[test]

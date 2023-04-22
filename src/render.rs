@@ -1,18 +1,17 @@
 use crate::input::Token;
-use crate::{buffer::*, Mode};
-use std::os::unix::io::RawFd;
-use nix::sys::termios::{Termios, LocalFlags};
-use nix::sys::termios;
-use crate::window::*;
 use crate::term;
-
+use crate::window::*;
+use crate::{buffer::*, Mode};
+use nix::sys::termios;
+use nix::sys::termios::{LocalFlags, Termios};
+use std::os::unix::io::RawFd;
 
 pub struct Ctx {
     termios: Termios,
     orig: Termios,
     pub term: RawFd,
     pub window: Window,
-    pub mode: Mode
+    pub mode: Mode,
 }
 
 impl Ctx {
@@ -26,15 +25,14 @@ impl Ctx {
         termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
 
-
         let window = Window::new(buf);
 
         Self {
-            termios, 
+            termios,
             orig,
             term,
             mode: Mode::Normal,
-            window
+            window,
         }
     }
 
@@ -56,7 +54,3 @@ impl Drop for Ctx {
         termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap_or(());
     }
 }
-
-
-
-

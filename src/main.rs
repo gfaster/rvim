@@ -1,27 +1,26 @@
 #![allow(dead_code)]
-mod render;
 mod buffer;
+mod input;
+mod render;
+mod term;
 mod textobj;
 mod window;
-mod input;
-mod term;
-use std::sync::atomic::AtomicBool;
-use nix::sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet};
+use nix::sys::{
+    signal::{self, SaFlags, SigHandler},
+    signalfd::SigSet,
+};
 use render::Ctx;
-
-
-
+use std::sync::atomic::AtomicBool;
 
 pub enum Mode {
     Normal,
-    Insert
+    Insert,
 }
 
 // how I handle the interrupts for now
 static mut PENDING: AtomicBool = AtomicBool::new(false);
 
 fn main() {
-
     let sighandler = SigHandler::Handler(sa_handler);
     let sig = signal::SigAction::new(sighandler, SaFlags::empty(), SigSet::empty());
 

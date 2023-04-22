@@ -3,7 +3,7 @@ use std::io::{self, Write};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TermPos {
     pub x: u32,
-    pub y: u32
+    pub y: u32,
 }
 
 impl TermPos {
@@ -35,4 +35,3 @@ pub fn goto(pos: TermPos) {
 pub fn flush() {
     io::stdout().flush().unwrap();
 }
-
