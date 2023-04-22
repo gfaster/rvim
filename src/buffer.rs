@@ -1,4 +1,4 @@
-use std::{ops::{Range, Index}, collections::BTreeMap};
+use std::{ops::Range, collections::BTreeMap};
 
 pub struct Buffer {
     data: String,

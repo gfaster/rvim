@@ -2,7 +2,9 @@
 mod render;
 mod buffer;
 mod textobj;
+mod window;
 mod input;
+mod term;
 use std::sync::atomic::AtomicBool;
 use nix::sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet};
 use render::Ctx;
@@ -46,8 +48,8 @@ fn main() {
         }
     }
 
-    render::term::altbuf_disable();
-    render::term::flush();
+    term::altbuf_disable();
+    term::flush();
 
     // eprintln!("reached end of main loop");
 }
