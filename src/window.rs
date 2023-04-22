@@ -3,6 +3,7 @@ use crate::render::Ctx;
 use crate::term;
 use crate::term::TermPos;
 use enum_dispatch::enum_dispatch;
+use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
 
 #[derive(Default)]
@@ -26,6 +27,7 @@ trait DispComponent {
 enum Component {
     LineNumbers,
     RelLineNumbers,
+    StatusLine
 }
 
 struct LineNumbers;
@@ -79,6 +81,24 @@ impl DispComponent for RelLineNumbers {
     }
 }
 
+struct StatusLine;
+impl DispComponent for StatusLine {
+    fn padding(&self) -> Padding {
+        Padding { top: 0, bottom: 1, left: 0, right: 0 }
+    }
+
+    fn draw(&self, win: &Window, ctx: &Ctx) {
+        let base = win.reltoabs(TermPos { x: 0, y: win.height() - 1 });
+        term::goto(TermPos { x: base.x - win.padding.left, y: base.y + 1 });
+        
+        match ctx.mode {
+            crate::Mode::Normal => print!("\x1b[42;1;30m NORMAL \x1b[0m"),
+            crate::Mode::Insert => print!("\x1b[44;1;30m INSERT \x1b[0m"),
+        }
+        print!("\x1b[40m {: <x$}\x1b[0m",win.buf.name(), x = (win.width() + win.padding.left + win.padding.right - 9) as usize);
+    }
+}
+
 pub struct Window {
     buf: Buffer,
     topline: usize,
@@ -92,7 +112,7 @@ pub struct Window {
 
 impl Window {
     pub fn new(buf: Buffer) -> Self {
-        let components = vec![Component::RelLineNumbers(RelLineNumbers)];
+        let components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
         let padding = components.iter().fold(
             Padding {
                 top: 0,
@@ -110,18 +130,19 @@ impl Window {
                 }
             },
         );
+        let (terminal_size::Width(tw), terminal_size::Height(th)) = terminal_size().unwrap_or((terminal_size::Width(80), terminal_size::Height(40)));
         Self {
             buf,
             topline: 0,
             cursoroff: 0,
             cursorpos: TermPos { x: 0, y: 0 },
             topleft: TermPos {
-                x: 1 + padding.left,
-                y: 1 + padding.top,
+                x: 0 + padding.left,
+                y: 0 + padding.top,
             },
             botright: TermPos {
-                x: 90 - padding.right,
-                y: 40 - padding.bottom,
+                x: tw as u32 - padding.right,
+                y: th as u32 - padding.bottom,
             },
             components,
             padding,
@@ -153,7 +174,6 @@ impl Window {
     }
 
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
-        // Is this off-by-one?
         let prev_line = self
             .buf
             .lines_start()

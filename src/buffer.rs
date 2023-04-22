@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, ops::Range};
 
 pub struct Buffer {
+    name: String,
     data: String,
     changes: BTreeMap<usize, String>,
     lines: Vec<usize>,
@@ -24,6 +25,7 @@ impl<'a> Buffer {
             .collect();
 
         Self {
+            name: "new buffer".to_owned(),
             data,
             lines,
             changes,
@@ -95,6 +97,10 @@ impl<'a> Buffer {
             } else {
                 0
             }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
