@@ -27,7 +27,7 @@ fn main() {
         signal::sigaction(signal::Signal::SIGINT, &sig).unwrap();
     }
 
-    let buf = buffer::Buffer::new("src/passage.txt").unwrap();
+    let buf = buffer::Buffer::new("src/passage_wrapped.txt").unwrap();
     let mut ctx = Ctx::new(libc::STDIN_FILENO, buf);
     ctx.render();
 

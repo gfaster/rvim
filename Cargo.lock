@@ -55,6 +55,7 @@ dependencies = [
  "terminal_size",
  "textwrap",
  "unic-segment",
+ "unicode-truncate",
  "unicode-width",
 ]
 
@@ -284,6 +285,15 @@ checksum = "c5faade31a542b8b35855fff6e8def199853b2da8da256da52f52f1316ee3137"
 dependencies = [
  "hashbrown",
  "regex",
+]
+
+[[package]]
+name = "unicode-truncate"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a04be5ca5f7a4a7270ffea82bc41c59b87c611ed04f20e77c338e8d3c2348e42"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]

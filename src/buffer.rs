@@ -44,22 +44,26 @@ impl<'a> Buffer {
         self.lines.get(line).copied()
     }
 
-    /// get the virtual start of line - if line doesn't exist, return start of last line
+    /// get the virtual start of line - if line doesn't exist, return one past end of buffer
     pub fn virtual_getline(&self, line: usize) -> usize {
-        *self.lines.get(line).unwrap_or_else(|| self.lines.last().expect("never empty"))
+        self.lines.get(line).map_or_else(|| self.data.len(), |i| *i)
     }
 
     /// get the bytes range of the line, not including trailing LF
+    /// I might want to change this to include trailing LF - that gives garuntee that every line is
+    /// at least one character long, and lets me "select" it on screen
     pub fn line_range(&self, line: usize) -> Range<usize> {
-        if line + 1 >= self.lines.len() {
-            self.virtual_getline(line)..self.data.len()
-        } else {
-            self.lines[line]..(self.lines[line + 1] - 1)
-        }
+        self.virtual_getline(line)..self.virtual_getline(line + 1)
     }
 
     pub fn insert_char(&mut self, pos: usize, c: char) {
-        self.lines.iter_mut().skip_while(|i| **i < pos).map(|i| *i+=1).last();
+        if c == '\n' {
+            let start = self.lines.iter().enumerate().rev().find(|(_, i)| **i <= pos).unwrap().0;
+            self.lines.insert(start + 1, pos);
+            self.lines.iter_mut().skip(start + 1).map(|i| *i+=1).last();
+        } else {
+            self.lines.iter_mut().skip_while(|i| **i < pos).map(|i| *i+=1).last();
+        };
         self.data.insert(pos, c);
     }
 }
@@ -68,6 +72,38 @@ impl<'a> Buffer {
 mod test {
     use super::*;
 
+    #[test]
+    fn test_insert_lf() {
+        let mut b = Buffer::new_fromstring("0\n1\n22\n3\n4".to_string());
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 7);
+        b.insert_char(5, '\n');
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 6);
+        assert_eq!(b.lines[4], 8);
+    }
+
+    #[test]
+    fn test_insert_lf_after_lf() {
+        let mut b = Buffer::new_fromstring("0\n1\n22\n3\n4".to_string());
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 7);
+        b.insert_char(4, '\n');
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 5);
+        assert_eq!(b.lines[4], 8);
+    }
+
+    #[test]
+    fn test_insert_lf_at_lf() {
+        let mut b = Buffer::new_fromstring("0\n1\n22\n3\n4".to_string());
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 7);
+        b.insert_char(3, '\n');
+        assert_eq!(b.lines[2], 4);
+        assert_eq!(b.lines[3], 5);
+        assert_eq!(b.lines[4], 8);
+    }
 
     #[test]
     fn test_get_range_of_lines() {
@@ -96,7 +132,7 @@ mod test {
         assert_eq!(b.virtual_getline(0), 0); 
         assert_eq!(b.virtual_getline(1), 2); 
         assert_eq!(b.virtual_getline(4), 8); 
-        assert_eq!(b.virtual_getline(5), 8); 
+        assert_eq!(b.virtual_getline(5), 9); 
     }
 
     #[test]
@@ -111,10 +147,10 @@ mod test {
     #[test]
     fn test_line_range() {
         let b = Buffer::new_fromstring("0\n1\n22\n333\n4".to_string());
-        assert_eq!(b.line_range(0), 0..1);
-        assert_eq!(b.line_range(1), 2..3);
-        assert_eq!(b.line_range(2), 4..6);
-        assert_eq!(b.line_range(3), 7..10);
+        assert_eq!(b.line_range(0), 0..2);
+        assert_eq!(b.line_range(1), 2..4);
+        assert_eq!(b.line_range(2), 4..7);
+        assert_eq!(b.line_range(3), 7..11);
         assert_eq!(b.line_range(4), 11..12);
     }
 }
