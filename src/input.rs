@@ -19,7 +19,7 @@ pub fn handle_input(ctx: &Ctx) -> Option<Token> {
     match ctx.mode {
         Mode::Normal => handle_normal_input(),
         Mode::Insert => Some({
-            let c = stdin().bytes().map(|b| char::from(b.expect("cannot read char"))).next()?;
+            let c = stdin().bytes().map(|b| Some(char::from(b.ok()?))).next()??;
             eprintln!("{:x}", c as u32);
             match c {
                 '\x1b' => Token::SetMode(Mode::Normal),

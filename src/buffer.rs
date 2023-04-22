@@ -1,4 +1,4 @@
-use std::{ops::Range, collections::BTreeMap};
+use std::{ops::{Range, Index}, collections::BTreeMap};
 
 pub struct Buffer {
     data: String,
@@ -66,11 +66,28 @@ impl<'a> Buffer {
         };
         self.data.insert(pos, c);
     }
+
+    pub fn char_atoff(&self, off: usize) -> char {
+        self.data.split_at(off).1.chars().next().expect("in bounds")
+    }
+
+    pub fn working_linecnt(&self) -> usize {
+        self.lines.len() - if *self.data.as_bytes().last().unwrap_or(&(' ' as u8)) == '\n' as u8 { 1 } else { 0 }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_char_atoff() {
+        let b = Buffer::new_fromstring("0\n1\n22\n3\n4\n".to_string());
+        assert_eq!(b.char_atoff(0), '0');
+        assert_eq!(b.char_atoff(1), '\n');
+        assert_eq!(b.char_atoff(9), '4');
+        assert_eq!(b.char_atoff(10), '\n');
+    }
 
     #[test]
     fn test_insert_lf() {

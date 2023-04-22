@@ -77,10 +77,9 @@ impl Window {
     }
 
     pub fn clear(&self) {
-        term::goto(self.reltoabs(TermPos { x: 0, y: 0 }));
-        (self.topleft.y..self.botright.y).map(|l| {
+        (0..self.height()).map(|l| {
+            term::goto(self.reltoabs(TermPos { x: 0, y: l }));
             print!("{}", " ".repeat(self.width() as usize));
-            term::goto(TermPos { x: self.topleft.x, y: l })
         }).last();
     }
 
@@ -92,16 +91,25 @@ impl Window {
         // Is this off-by-one?
         let prev_line = self.buf.lines_start().iter().enumerate().rev().find(|(_, off)| **off <= self.cursoroff).unwrap().0;
         let prev_lineoff = self.cursoroff - self.buf.lines_start()[prev_line];
-        let newline = prev_line.saturating_add_signed(dy);
+        let newline = prev_line.saturating_add_signed(dy).clamp(0, self.buf.working_linecnt() - 1);
         let newline_range = self.buf.line_range(newline);
 
-        self.cursoroff = (newline_range.start as isize + dx + prev_lineoff as isize).clamp(newline_range.start as isize, newline_range.end as isize) as usize;
+        self.cursoroff = (newline_range.start as isize + dx + prev_lineoff as isize).clamp(newline_range.start as isize, newline_range.end as isize - 1) as usize;
 
         let x = self.cursoroff - newline_range.start;
+
+        // move window if it's off the screen
+        match newline as isize - self.topline as isize {
+            l if l < 0 => self.topline -= l.unsigned_abs(),
+            l if l >= self.height() as isize => self.topline += (l - self.height() as isize) as usize + 1,
+            _ => ()
+        }
+
         let y = newline - self.topline;
 
         // this should be screen space
         assert!((x as u32) < self.width());
+        assert!((y as u32) < self.height());
         self.cursorpos = TermPos { x: x as u32, y: y as u32 };
     }
 
@@ -133,8 +141,9 @@ impl Window {
     }
 
     fn draw(&self) {
+        self.clear();
         term::rst_cur();
-        self.truncated_lines().take((self.botright.y - self.topleft.y) as usize).enumerate().map(|(i, l)| {
+        self.truncated_lines().take(self.height() as usize).enumerate().map(|(i, l)| {
             term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
             print!("{}", l.trim_end_matches('\n'));
         }).last();
@@ -206,7 +215,7 @@ impl Ctx {
 
 impl Drop for Ctx {
     fn drop(&mut self) {
-        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap();
+        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap_or(());
     }
 }
 
