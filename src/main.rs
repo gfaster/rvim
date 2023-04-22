@@ -1,12 +1,19 @@
 #![allow(dead_code)]
 mod render;
 mod buffer;
-
+mod textobj;
+mod input;
 use std::sync::atomic::AtomicBool;
-
-use nix::{sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet}, unistd::pause};
-use libc;
+use nix::sys::{signal::{self, SaFlags, SigHandler}, signalfd::SigSet};
 use render::Ctx;
+
+
+
+
+pub enum Mode {
+    Normal,
+    Insert
+}
 
 // how I handle the interrupts for now
 static mut PENDING: AtomicBool = AtomicBool::new(false);
@@ -21,11 +28,15 @@ fn main() {
     }
 
     let buf = buffer::Buffer::new("src/passage.txt").unwrap();
-    let ctx = Ctx::new(libc::STDIN_FILENO, buf);
+    let mut ctx = Ctx::new(libc::STDIN_FILENO, buf);
     ctx.render();
 
     loop {
-        pause();
+        if let Some(token) = input::handle_input(&ctx) {
+            ctx.process_token(token);
+            ctx.render();
+        }
+
         unsafe {
             if PENDING.load(std::sync::atomic::Ordering::Acquire) {
                 break;
