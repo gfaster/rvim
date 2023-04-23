@@ -79,7 +79,7 @@ impl<'a> Buffer {
         } else {
             self.lines
                 .iter_mut()
-                .skip_while(|i| **i < pos)
+                .skip_while(|i| **i <= pos)
                 .map(|i| *i += 1)
                 .last();
         };

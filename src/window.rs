@@ -64,9 +64,9 @@ impl DispComponent for RelLineNumbers {
                 y: winbase.y,
             });
             if l == win.cursorpos.y {
-                print!("\x1b[1;32m{:3}\x1b[0m", l as usize + win.topline + 1);
+                print!("\x1b[1;32m{: >3} \x1b[0m", l as usize + win.topline + 1);
             } else {
-                print!("\x1b[1;32m{:<3}\x1b[0m", win.cursorpos.y.abs_diff(l));
+                print!("\x1b[1;32m{: >4}\x1b[0m", win.cursorpos.y.abs_diff(l));
             }
         }
     }
@@ -112,6 +112,11 @@ pub struct Window {
 
 impl Window {
     pub fn new(buf: Buffer) -> Self {
+        let (terminal_size::Width(tw), terminal_size::Height(th)) = terminal_size().unwrap_or((terminal_size::Width(80), terminal_size::Height(40)));
+        Self::new_withdim(buf, TermPos { x: 0, y: 0 }, tw as u32, th as u32)
+    }
+
+    pub fn new_withdim(buf: Buffer, topleft: TermPos, width: u32, height: u32) -> Self {
         let components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
         let padding = components.iter().fold(
             Padding {
@@ -130,19 +135,18 @@ impl Window {
                 }
             },
         );
-        let (terminal_size::Width(tw), terminal_size::Height(th)) = terminal_size().unwrap_or((terminal_size::Width(80), terminal_size::Height(40)));
         Self {
             buf,
             topline: 0,
             cursoroff: 0,
             cursorpos: TermPos { x: 0, y: 0 },
             topleft: TermPos {
-                x: 0 + padding.left,
-                y: 0 + padding.top,
+                x: topleft.x + padding.left,
+                y: topleft.y + padding.top,
             },
             botright: TermPos {
-                x: tw as u32 - padding.right,
-                y: th as u32 - padding.bottom,
+                x: width as u32 - padding.right,
+                y: height as u32 - padding.bottom,
             },
             components,
             padding,
@@ -242,14 +246,13 @@ impl Window {
     }
 
     pub fn draw(&self, ctx: &Ctx) {
-        self.clear();
         term::rst_cur();
         self.truncated_lines()
             .take(self.height() as usize)
             .enumerate()
             .map(|(i, l)| {
                 term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
-                print!("{}", l.trim_end_matches('\n'));
+                print!("{:<w$}", l.trim_end_matches('\n'), w = self.width() as usize);
             })
             .last();
         self.components.iter().map(|x| x.draw(self, ctx)).last();
@@ -275,8 +278,8 @@ impl Window {
                 self.move_cursor(-(self.width() as isize), 0);
             }
             _ => {
-                self.move_cursor(1, 0);
                 self.buf.insert_char(off, c);
+                self.move_cursor(1, 0);
             }
         }
     }

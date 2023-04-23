@@ -29,7 +29,8 @@ fn main() {
     }
 
     // let buf = buffer::Buffer::new("src/passage_wrapped.txt").unwrap();
-    let buf = buffer::Buffer::new("src/lines.txt").unwrap();
+    let buf = buffer::Buffer::new("src/crossbox.txt").unwrap();
+    // let buf = buffer::Buffer::new("src/lines.txt").unwrap();
     let mut ctx = Ctx::new(libc::STDIN_FILENO, buf);
     ctx.render();
 
