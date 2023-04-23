@@ -8,7 +8,7 @@ use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
 use std::os::unix::io::RawFd;
 
-pub struct Ctx {
+pub struct Ctx<B> where B: Buffer {
     termios: Termios,
     orig: Termios,
     pub term: RawFd,

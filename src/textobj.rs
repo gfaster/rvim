@@ -17,8 +17,8 @@ pub enum TextObjectModifier {
 */
 
 #[enum_dispatch]
-pub trait TextObj {
-    fn find_bounds(&self, buf: &Buffer, off: usize, toi: TextObjectModifier) -> Option<Range<usize>>;
+pub trait TextObj<B> where B: Buffer {
+    fn find_bounds(&self, buf: &B, off: usize, toi: TextObjectModifier) -> Option<Range<usize>>;
 }
 
 #[enum_dispatch(TextObj)]
@@ -27,8 +27,8 @@ pub enum TextObject {
 }
 
 pub struct WordObject;
-impl TextObj for WordObject {
-    fn find_bounds(&self, buf: &Buffer, off:usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
+impl<B> TextObj<B> for WordObject {
+    fn find_bounds(&self, buf: &B, off:usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
         let start;
         let end;
         let c = buf.char_atoff(off);

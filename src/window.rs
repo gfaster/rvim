@@ -16,9 +16,9 @@ struct Padding {
 }
 
 #[enum_dispatch]
-trait DispComponent {
+trait DispComponent<B> where B: Buffer{
     /// write the component
-    fn draw(&self, win: &Window, ctx: &Ctx);
+    fn draw(&self, win: &Window, ctx: &Ctx<B>);
 
     /// amount of padding needed left, top, bottom, right
     fn padding(&self) -> Padding;
@@ -33,8 +33,8 @@ enum Component {
 }
 
 struct LineNumbers;
-impl DispComponent for LineNumbers {
-    fn draw(&self, win: &Window, _ctx: &Ctx) {
+impl<B> DispComponent<B> for LineNumbers {
+    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
             term::goto(TermPos {
@@ -56,8 +56,8 @@ impl DispComponent for LineNumbers {
 }
 
 struct RelLineNumbers;
-impl DispComponent for RelLineNumbers {
-    fn draw(&self, win: &Window, _ctx: &Ctx) {
+impl<B> DispComponent<B> for RelLineNumbers {
+    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
 
@@ -86,9 +86,8 @@ impl DispComponent for RelLineNumbers {
 }
 
 struct Welcome;
-
-impl DispComponent for Welcome {
-    fn draw(&self, win: &Window, _ctx: &Ctx) {
+impl<B> DispComponent<B> for Welcome {
+    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         if !win.dirty {
             let s = include_str!("../assets/welcome.txt");
             let top = (win.height() - s.lines().count() as u32)/2;
@@ -110,12 +109,12 @@ impl DispComponent for Welcome {
 }
 
 struct StatusLine;
-impl DispComponent for StatusLine {
+impl<B> DispComponent<B> for StatusLine {
     fn padding(&self) -> Padding {
         Padding { top: 0, bottom: 1, left: 0, right: 0 }
     }
 
-    fn draw(&self, win: &Window, ctx: &Ctx) {
+    fn draw(&self, win: &Window<B>, ctx: &Ctx<B>) {
         let base = win.reltoabs(TermPos { x: 0, y: win.height() - 1 });
         term::goto(TermPos { x: base.x - win.padding.left, y: base.y + 1 });
         
@@ -127,8 +126,8 @@ impl DispComponent for StatusLine {
     }
 }
 
-pub struct Window {
-    buf: Buffer,
+pub struct Window<B> where B: Buffer {
+    buf: B,
     topline: usize,
     cursorpos: TermPos,
     cursoroff: usize,

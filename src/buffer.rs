@@ -1,13 +1,190 @@
-use std::{collections::BTreeMap, ops::Range};
+use std::{collections::BTreeMap, ops::Range, str::Chars, borrow::BorrowMut};
 
-pub struct Buffer {
+/// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
+/// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
+/// one-to-one. Also, using usize since it can very well be more than u32::max (though not for now)
+pub struct DocPos {
+    x: usize,
+    y: usize
+}
+
+impl DocPos {
+    fn row(&self) -> usize {
+        self.y + 1
+    }
+    fn col(&self) -> usize {
+        self.x + 1
+    }
+}
+
+/// Represents a file open in memory. A buffer provides some interesting challenges that I need to
+/// figure out. All of the following must hold for a buffer of L lines:
+///  1) getting line N from the buffer should be at least in O(log2 L)
+///  2) inserting a line at any point should be at least in O(log2 L)
+///  3) the number of modifications made should not increase Insert or remove times
+///  4) I think it's OK for edits of line length N to be O(N)
+///
+/// It's clear that storing lines individually is a must, and for the sake of undo, at least some
+/// number of changes will have to be stored as well. The trouble is two main things:
+///  1) how do we avoid having to apply the entire changes stack to read the current state
+///  2) how do we avoid having to move all lines in order to insert another one
+/// Doing one or the other is pretty straight forward, but I haven't figured out a way to do both.
+///
+/// Some brief research tells us three possible solutions: Gap Buffer, Rope, or Piece Table. It
+/// seems like Piece Tables would be the best for now due to its simplicity, but I'll make Buffer
+/// into a trait since it seems worthwhile to implement all of them.
+pub trait Buffer {
+    fn name(&self) -> &str;
+    fn open(file: &str) -> Result<Self, std::io::Error>;
+    fn from_string(s: String) -> Self;
+
+    fn chars_fwd(&self, start: DocPos) -> Chars;
+    fn chars_bck(&self, start: DocPos) -> Chars;
+    fn delete_char(&mut self, afterpos: DocPos) -> char;
+    fn insert_char(&mut self, afterpos: DocPos, c: char);
+    fn get_off(&self, pos: DocPos) -> usize;
+}
+
+enum PTType {
+    Add,
+    Orig
+}
+
+// This is linewise, not characterwise
+struct PieceEntry {
+    which: PTType,
+    start: usize,
+    len: usize
+}
+
+/// Piece Table Buffer
+pub struct PTBuffer {
+    name: String,
+    orig: Vec<String>,
+    add: Vec<String>,
+    table: Vec<PieceEntry>
+}
+
+impl Buffer for PTBuffer {
+    fn name(&self) -> &str { &self.name }
+
+    fn open(file: &str) -> Result<Self, std::io::Error> {
+        let data = std::fs::read_to_string(file)?;
+        Ok(Self::from_string(data))
+    }
+
+    fn from_string(s: String) -> Self {
+        let name = "new buffer".to_string();
+        let orig = Vec::from(name.lines());
+        let add = Vec::new();
+        let table = vec![PieceEntry { which: PTType::Orig, start: 0, len: orig.len() }];
+        Self { name , orig, add, table }
+    }
+
+    fn chars_fwd(&self, start: DocPos) -> Chars {
+        self.lines_fwd(self.table_idx(start)).enumerate().flat_map(|x| {
+            if let (0, s) = x {
+                s[start.x..]
+            } else {
+                x.1
+            }
+        })
+    }
+
+    fn chars_bck(&self, start: DocPos) -> Chars {
+        self.lines_bck(self.table_idx(start)).enumerate().flat_map(|x| {
+            if let (0, s) = x {
+                s[..=start.x].iter().rev()
+            } else {
+                x.1.iter.rev()
+            }
+        })
+    }
+
+    fn delete_char(&mut self, afterpos: DocPos) -> char {
+
+    }
+
+    fn insert_char(&mut self, pos: DocPos, c: char) {
+        let (prev, tidx, start) = self.get_line(pos);
+        let tlen = self.table[tidx].len;
+        let mut new = prev.to_string();
+        new.insert(pos.x, c);
+        let newv: Vec<_> = new.split('\n').collect();
+
+        let addstart = self.add.len();
+        let addlen = newv.len();
+        self.add.extend_from_slice(newv);
+
+        let prevte = self.table.remove(tidx);
+        self.table.insert(tidx, PieceEntry { which: PTType::Add, start: addstart, len: addlen });
+        if pos.y + 1 < start + tlen {
+            // cut above
+            self.table.insert(tidx + 1, PieceEntry { which: prevte.which, start: pos.y + addlen, len: start + tlen - pos.y - 1 })
+        }
+        if pos.y > start {
+            // cut below
+            self.table.insert(tidx, PieceEntry { which: prevte.which, start: pos.y + addlen, len: start - pos.y})
+        }
+    }
+
+    fn get_off(&self, pos: DocPos) -> usize {
+        todo!()
+    }
+}
+
+impl PTBuffer {
+    fn match_table(&self, which: &PTType) -> [&str] {
+        match which {
+            PTType::Add => self.add,
+            PTType::Orig => self.orig,
+        }
+    }
+
+    /// Iterator over lines starting at table table entry tidx
+    fn lines_fwd(&self, tidx: usize) -> impl Iterator<Item = &str> {
+        self.table[tidx..].iter().flat_map(|te| self.match_table(&te.which)[te.start..].iter().take(te.len));
+    }
+
+    /// Iterator over reverse-order lines starting at table entry tidx
+    fn lines_bck(&self, tidx: usize) -> impl Iterator<Item = &str> {
+        self.table[..tidx].iter().rev().flat_map(|te| self.match_table(&te.which)[te.start..].iter().rev().take(te.len));
+    }
+
+    /// get the table idx and line at pos
+    ///
+    /// Return (line, tidx, te start line)
+    fn get_line(&self, pos: DocPos) -> (&str, usize, usize) {
+        let (tidx, first) = self.table_idx(pos);
+        let te = self.table[tidx];
+        let rem = pos.y - first;
+        let line = self.match_table(&te.which)[te.start + rem];
+        (line, tidx, first)
+    }
+
+    /// returns the table idx and start line of entry for pos
+    ///
+    /// Returns: (table index, te start line)
+    fn table_idx(&self, pos: DocPos) -> (usize, usize) {
+        let mut line = 0;
+        let tidx = self.table.iter().enumerate().take_while(|x| {
+            if line + x.1.len <= pos.y {
+                line += x.1.len;
+                true
+            } else { false }
+        }).last().unwrap_or((0, &self.table[0])).0;
+        (tidx, line)
+    }
+}
+
+
+pub struct SimpleBuffer {
     name: String,
     data: String,
-    changes: BTreeMap<usize, String>,
     lines: Vec<usize>,
 }
 
-impl<'a> Buffer {
+impl<'a> SimpleBuffer {
     pub fn new(file: &str) -> Result<Self, std::io::Error> {
         let data = std::fs::read_to_string(file)?;
         Ok(Self::new_fromstring(data))
@@ -28,7 +205,6 @@ impl<'a> Buffer {
             name: "new buffer".to_owned(),
             data,
             lines,
-            changes,
         }
     }
 
@@ -139,9 +315,108 @@ impl<'a> Buffer {
     }
 }
 
+/// structure for a focused buffer. This is not a window and not a buffer. It holds the context of a
+/// buffer editing session for later use. A window can display this, but shouldn't be limited  to
+/// displaying only this. The reason I'm making this separate from window is that I want window to
+/// be strictly an abstraction for rendering and/or focusing. 
+///
+/// I need to think about what niche the command line fits into. Is it another window, or is it its
+/// own thing?
+///
+/// I should consider a "text field" or something similar as a trait for
+/// an area that can be focused and take input.
+struct BufCxt<'a, B> where B: Buffer {
+    buf: &'a B,
+
+    /// I use DocPos rather than a flat offset to more easily handle linewise operations, which
+    /// seem to be more common than operations that operate on the flat buffer. It also makes
+    /// translation more convienent, especially when the buffer is stored as an array of lines
+    /// rather than a flat byte array (although it seems like this would slow transversal?).
+    cursorpos: DocPos,
+    topline: usize
+}
+
+impl<B> BufCxt<'_, B> {
+
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    mod buffer {
+        use super::*;
+
+        #[test]
+        fn test_ptbuf_chars_fwd() { test_trait_chars_fwd::<PTBuffer>() }
+        fn test_trait_chars_fwd<B>() where B: Buffer {
+            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
+            let mut it = b.chars_fwd(0);
+            assert_eq!(it.next(), Some('0'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('1'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('A'));
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('3'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('4'));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_chars_fwd_mid() { test_trait_chars_fwd_mid::<PTBuffer>() }
+        fn test_trait_chars_fwd_mid<B>() where B: Buffer {
+            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
+            let mut it = b.chars_fwd(6);
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('3'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('4'));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_chars_bck() { test_trait_chars_bck::<PTBuffer>() }
+        fn test_trait_chars_bck<B>() where B: Buffer {
+            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
+            let mut it = b.chars_bck(11);
+            assert_eq!(it.next(), Some('4'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('3'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('A'));
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('1'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('0'));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_chars_bck_mid() { test_trait_chars_bck_mid::<PTBuffer>() }
+        fn test_trait_chars_bck_mid<B>() where B: Buffer {
+            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
+            let mut it = b.chars_bck(4);
+            assert_eq!(it.next(), Some('2'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('1'));
+            assert_eq!(it.next(), Some('\n'));
+            assert_eq!(it.next(), Some('0'));
+            assert_eq!(it.next(), None);
+        }
+
+        fn test_trait_construct_passage<B>() where B: Buffer {
+            let mut b = B::from_string("".to_string());
+
+        }
+
+    }
 
     #[test]
     fn test_delete_char() {
