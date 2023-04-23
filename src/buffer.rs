@@ -34,7 +34,6 @@ impl<'a> Buffer {
 
     /// Gets an iterator over lines in a range
     pub fn get_lines(&'a self, range: Range<usize>) -> impl Iterator<Item = &str> {
-        // TODO: don't need to iterate everything before start
         self.data.lines().skip(range.start).take(range.len())
     }
 
@@ -53,7 +52,7 @@ impl<'a> Buffer {
         self.lines.get(line).map_or_else(|| self.data.len(), |i| *i)
     }
 
-    /// get the bytes range of the line, not including trailing LF
+    /// get the bytes range of the line, ~~not~~ including trailing LF
     /// I might want to change this to include trailing LF - that gives garuntee that every line is
     /// at least one character long, and lets me "select" it on screen
     pub fn line_range(&self, line: usize) -> Range<usize> {
@@ -86,6 +85,30 @@ impl<'a> Buffer {
         self.data.insert(pos, c);
     }
 
+    pub fn delete_char(&mut self, pos: usize) {
+        let lidx;
+        let rem = self.data.remove(pos);
+        if rem == '\n' {
+            lidx = self.lines.iter().enumerate().find(|(_, l)| **l == pos + 1).expect("can find newline").0;
+            self.lines.remove(lidx);
+        } else {
+            lidx = 1 + self
+                .lines
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, loff)| **loff <= pos)
+                .unwrap()
+                .0;
+        }
+        self.lines
+            .iter_mut()
+            .skip(lidx)
+            .map(|i| *i -= 1)
+            .last();
+
+    }
+
     pub fn char_atoff(&self, off: usize) -> char {
         self.data.split_at(off).1.chars().next().expect("in bounds")
     }
@@ -107,6 +130,29 @@ impl<'a> Buffer {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_delete_char() {
+        let mut b = Buffer::new_fromstring("0\n1\n2A2\n3\n4\n".to_string());
+        assert_eq!(b.data, "0\n1\n2A2\n3\n4\n");
+        assert_eq!(b.lines, [0, 2, 4, 8, 10, 12]);
+
+        b.delete_char(0);
+        assert_eq!(b.data, "\n1\n2A2\n3\n4\n");
+        assert_eq!(b.lines, [0, 1, 3, 7, 9, 11]);
+        b.delete_char(1);
+        assert_eq!(b.data, "\n\n2A2\n3\n4\n");
+        assert_eq!(b.lines, [0, 1, 2, 6, 8, 10]);
+        b.delete_char(0);
+        assert_eq!(b.data, "\n2A2\n3\n4\n");
+        assert_eq!(b.lines, [0, 1, 5, 7, 9]);
+        b.delete_char(2);
+        assert_eq!(b.data, "\n22\n3\n4\n");
+        assert_eq!(b.lines, [0, 1, 4, 6, 8]);
+        b.delete_char(3);
+        assert_eq!(b.data, "\n223\n4\n");
+        assert_eq!(b.lines, [0, 1, 5, 7]);
+    }
 
     #[test]
     fn test_char_atoff() {

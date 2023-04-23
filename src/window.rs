@@ -65,8 +65,10 @@ impl DispComponent for RelLineNumbers {
             });
             if l == win.cursorpos.y {
                 print!("\x1b[1;32m{: >3} \x1b[0m", l as usize + win.topline + 1);
-            } else {
+            } else if l as usize + win.topline < win.buf.working_linecnt() {
                 print!("\x1b[1;32m{: >4}\x1b[0m", win.cursorpos.y.abs_diff(l));
+            } else {
+                print!("{: >4}", ' ');
             }
         }
     }
@@ -260,17 +262,21 @@ impl Window {
         term::flush();
     }
 
-    pub fn insert_char(&mut self, c: char) {
-        let off = self
+    /// recalculate cursoroff based on cursorpos
+    fn get_off(&self) -> usize {
+        self
             .buf
             .get_lines(0..self.topline)
             .fold(0, |acc, l| acc + l.len() + 1)
-            + self
-                .truncated_lines()
-                .take(self.cursorpos.y as usize)
-                .fold(0, |acc, l| acc + l.len() + 1)
-            + self.cursorpos.x as usize;
-        self.clear();
+        + self
+            .truncated_lines()
+            .take(self.cursorpos.y as usize)
+            .fold(0, |acc, l| acc + l.len() + 1)
+        + self.cursorpos.x as usize
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let off = self.cursoroff;
         match c {
             '\r' => {
                 self.move_cursor(1, 0);
@@ -282,6 +288,14 @@ impl Window {
                 self.move_cursor(1, 0);
             }
         }
+    }
+
+    /// deletes the character to the left of the cursor
+    pub fn delete_char(&mut self) {
+        if self.cursoroff == 0 {return};
+
+        self.buf.delete_char(self.cursoroff - 1);
+        self.move_cursor(-1, 0);
     }
 }
 

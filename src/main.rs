@@ -12,6 +12,7 @@ use nix::sys::{
 use render::Ctx;
 use std::sync::atomic::AtomicBool;
 
+#[derive(Clone, Copy)]
 pub enum Mode {
     Normal,
     Insert,
@@ -37,7 +38,7 @@ fn main() {
     loop {
         // Todo: run on separate thread
         if let Some(token) = input::handle_input(&ctx) {
-            ctx.process_token(token);
+            ctx.process_action(token);
             ctx.render();
         }
 

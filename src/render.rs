@@ -1,4 +1,5 @@
-use crate::input::Token;
+use crate::input::Action;
+use crate::input::Motion;
 use crate::term;
 use crate::window::*;
 use crate::{buffer::*, Mode};
@@ -40,11 +41,22 @@ impl Ctx {
         self.window.draw(self);
     }
 
-    pub fn process_token(&mut self, token: Token) {
-        match token {
-            Token::Motion(m) => self.window.move_cursor(m.dx, m.dy),
-            Token::SetMode(m) => self.mode = m,
-            Token::Insert(c) => self.window.insert_char(c),
+    pub fn process_action(&mut self, action: Action) {
+        match action.motion {
+            Some(m) => match m {
+                Motion::ScreenSpace { dy, dx } => self.window.move_cursor(dx, dy),
+                Motion::BufferSpace { doff: _ } => todo!(),
+            },
+            None => (),
+        }
+        match action.operation {
+
+            crate::input::Operation::Change => todo!(),
+            crate::input::Operation::Typing(c) => self.window.insert_char(c.chars().next().unwrap()),
+            crate::input::Operation::ToInsert => self.mode = Mode::Insert,
+            crate::input::Operation::Delete => self.window.delete_char(),
+            crate::input::Operation::ToNormal => self.mode = Mode::Normal,
+            crate::input::Operation::None => (),
         }
     }
 }
