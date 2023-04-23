@@ -125,6 +125,18 @@ impl<'a> Buffer {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn revoff_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
+        self.data.split_at(off).0.char_indices().map(move |x| (off - x.0, x.1)).rev()
+    }
+
+    pub fn off_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
+        self.data.split_at(off).1.char_indices().map(move |x| (off + x.0, x.1))
+    }
 }
 
 #[cfg(test)]

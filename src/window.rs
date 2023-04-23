@@ -2,6 +2,7 @@ use crate::buffer::Buffer;
 use crate::render::Ctx;
 use crate::term;
 use crate::term::TermPos;
+use crate::textobj::{TextObj, TextObject};
 use enum_dispatch::enum_dispatch;
 use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
@@ -27,7 +28,8 @@ trait DispComponent {
 enum Component {
     LineNumbers,
     RelLineNumbers,
-    StatusLine
+    StatusLine,
+    Welcome
 }
 
 struct LineNumbers;
@@ -83,6 +85,30 @@ impl DispComponent for RelLineNumbers {
     }
 }
 
+struct Welcome;
+
+impl DispComponent for Welcome {
+    fn draw(&self, win: &Window, _ctx: &Ctx) {
+        if !win.dirty {
+            let s = include_str!("../assets/welcome.txt");
+            let top = (win.height() - s.lines().count() as u32)/2;
+            s.lines().enumerate().map(|(idx, line)|{
+                term::goto(win.reltoabs(TermPos { x: 0, y: top + idx as u32 }));
+                print!("{:^w$}", line, w = win.width() as usize);
+            }).last();
+        }
+    }
+
+    fn padding(&self) -> Padding {
+        Padding {
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+        }
+    }
+}
+
 struct StatusLine;
 impl DispComponent for StatusLine {
     fn padding(&self) -> Padding {
@@ -110,6 +136,7 @@ pub struct Window {
     botright: TermPos,
     components: Vec<Component>,
     padding: Padding,
+    dirty: bool
 }
 
 impl Window {
@@ -119,7 +146,12 @@ impl Window {
     }
 
     pub fn new_withdim(buf: Buffer, topleft: TermPos, width: u32, height: u32) -> Self {
-        let components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
+        let mut components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
+        let dirty = buf.len() != 0;
+        if !dirty {
+            components.push(Component::Welcome(Welcome));
+        }
+
         let padding = components.iter().fold(
             Padding {
                 top: 0,
@@ -152,6 +184,7 @@ impl Window {
             },
             components,
             padding,
+            dirty
         }
     }
 
@@ -195,9 +228,13 @@ impl Window {
             .clamp(0, self.buf.working_linecnt() - 1);
         let newline_range = self.buf.line_range(newline);
 
+        if newline_range.len() > 0 {
         self.cursoroff = (newline_range.start as isize + dx + prev_lineoff as isize)
             .clamp(newline_range.start as isize, newline_range.end as isize - 1)
             as usize;
+        } else {
+            self.cursoroff = newline_range.start;
+        }
 
         let x = self.cursoroff - newline_range.start;
 
@@ -277,11 +314,14 @@ impl Window {
 
     pub fn insert_char(&mut self, c: char) {
         let off = self.cursoroff;
+        if !self.dirty {
+            self.clear();
+            self.dirty = true;
+        }
         match c {
             '\r' => {
-                self.move_cursor(1, 0);
                 self.buf.insert_char(off, '\n');
-                self.move_cursor(-(self.width() as isize), 0);
+                self.move_cursor(-(self.width() as isize), 1);
             }
             _ => {
                 self.buf.insert_char(off, c);
@@ -290,12 +330,25 @@ impl Window {
         }
     }
 
+    fn set_cursoroff(&mut self, newoff: usize) {
+        self.cursoroff = newoff;
+    }
+
     /// deletes the character to the left of the cursor
     pub fn delete_char(&mut self) {
         if self.cursoroff == 0 {return};
 
         self.buf.delete_char(self.cursoroff - 1);
         self.move_cursor(-1, 0);
+    }
+
+    pub fn delete_range(&mut self, t: &TextObject) -> Option<()>{
+        let r = t.find_bounds(&self.buf, self.cursoroff, crate::textobj::TextObjectModifier::Inner)?;
+        let start = r.start;
+        r.map(|_| self.buf.delete_char(start)).last();
+        self.set_cursoroff(start);
+        self.move_cursor(0, 0);
+        Some(())
     }
 }
 
@@ -314,7 +367,40 @@ mod test {
             botright: TermPos { x: 7, y: 32 },
             components: vec![],
             padding: Padding::default(),
+            dirty: true
         }
+    }
+
+    fn blank_window() -> Window {
+        let b = Buffer::new_fromstring("".to_string());
+        Window {
+            buf: b,
+            topline: 0,
+            cursorpos: TermPos { x: 0, y: 0 },
+            cursoroff: 0,
+            topleft: TermPos { x: 0, y: 0 },
+            botright: TermPos { x: 7, y: 32 },
+            components: vec![],
+            padding: Padding::default(),
+            dirty: false
+        }
+    }
+
+    #[test]
+    fn test_insert_blank_window() {
+        let mut w = blank_window();
+        w.insert_char('\n');
+        w.insert_char('\n');
+        w.insert_char('\n');
+    }
+
+    #[test]
+    fn test_move_in_blank_window() {
+        let mut w = blank_window();
+        w.move_cursor(0, 1);
+        w.move_cursor(1, 0);
+        assert_eq!(w.cursoroff, 0);
+        assert_eq!(w.cursorpos, TermPos {x: 0, y: 0});
     }
 
     #[test]
@@ -368,4 +454,6 @@ mod test {
         assert_eq!(w.cursorpos, TermPos { x: 0, y: 3 });
         assert_eq!(w.cursoroff, 24); // "truncated line"
     }
+
+
 }
