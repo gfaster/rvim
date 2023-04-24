@@ -14,6 +14,13 @@ use std::path::Path;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BufId(usize);
 
+#[cfg(test)]
+impl BufId {
+    pub fn new() -> Self {
+        BufId(1)
+    }
+}
+
 pub struct Ctx<B> where B: Buffer {
     id_counter: usize,
     buffers: std::collections::BTreeMap<BufId, B>,
@@ -34,8 +41,8 @@ impl<B> Ctx<B> where B: Buffer {
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
-            termios,
-            orig: termios.clone(),
+            termios: termios.clone(),
+            orig: termios,
             term,
             mode: Mode::Normal,
             window,
@@ -87,7 +94,14 @@ impl<B> Ctx<B> where B: Buffer {
 
         match action.motion {
             Some(m) => match m {
-                Motion::ScreenSpace { dy, dx } => self.window.move_cursor(self, dx, dy),
+                Motion::ScreenSpace { dy, dx } => {
+                    // type system here is kinda sneaky, can't use getbuf because all of self is
+                    // borrowed
+                    let bufid = self.window.buf_ctx.buf_id;
+                    let buf = &self.buffers[&bufid];
+                    let buf_ctx = &mut self.window.buf_ctx;
+                    buf_ctx.move_cursor(buf, dx, dy)
+                },
                 Motion::BufferSpace { doff: _ } => todo!(),
                 Motion::TextObj(_) => todo!()
             },
@@ -96,9 +110,15 @@ impl<B> Ctx<B> where B: Buffer {
 
         match action.operation {
             crate::input::Operation::Change => todo!(),
-            crate::input::Operation::Insert(c) => self.window.insert_char(self, c.chars().next().unwrap()),
+            crate::input::Operation::Insert(c) => {
+                let buf_ctx = &mut self.window.buf_ctx;
+                self.buffers.get_mut(&buf_ctx.buf_id).unwrap().insert_char(buf_ctx, c.chars().next().unwrap());
+            },
             crate::input::Operation::ToInsert => self.mode = Mode::Insert,
-            crate::input::Operation::Delete => self.window.delete_char(self),
+            crate::input::Operation::Delete => {
+                let buf_ctx = &mut self.window.buf_ctx;
+                self.buffers.get_mut(&buf_ctx.buf_id).unwrap().delete_char(buf_ctx);
+            },
             crate::input::Operation::ToNormal => self.mode = Mode::Normal,
             crate::input::Operation::None => (),
             crate::input::Operation::Replace(_) => todo!()

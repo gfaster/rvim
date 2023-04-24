@@ -1,4 +1,4 @@
-use crate::{window::Window, term::TermPos};
+use crate::{window::{Window, BufCtx}, term::TermPos};
 use std::{ops::Range, io::Write, path::Path};
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
@@ -42,12 +42,17 @@ pub trait Buffer {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
 
     fn get_lines(&self, lines: Range<usize>) -> Vec<&str>;
-    fn delete_char(&mut self, afterpos: DocPos) -> char;
-    fn insert_char(&mut self, pos: DocPos, c: char);
+
+    /// delete the character immediately to the left of the cursor in ctx
+    fn delete_char(&mut self, ctx: &mut BufCtx) -> char;
+
+    /// insert a character at the position of the cursor in ctx
+    fn insert_char(&mut self, ctx: &mut BufCtx, c: char);
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
 }
 
+#[derive(Clone, Copy)]
 enum PTType {
     Add,
     Orig
@@ -84,11 +89,12 @@ impl Buffer for PTBuffer {
         Self { name , orig, add, table }
     }
 
-    fn delete_char(&mut self, afterpos: DocPos) -> char {
+    fn delete_char(&mut self, ctx: &mut BufCtx) -> char {
         todo!()
     }
 
-    fn insert_char(&mut self, pos: DocPos, c: char) {
+    fn insert_char(&mut self, ctx: &mut BufCtx, c: char) {
+        let pos = ctx.cursorpos;
         let (prev, tidx, start) = self.get_line(pos);
         let tlen = self.table[tidx].len;
         let mut new = prev.to_string();
@@ -120,7 +126,7 @@ impl Buffer for PTBuffer {
 
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         for line in self.lines_fwd_internal(0) {
-            writeln!(writer, "{}", line);
+            writeln!(writer, "{}", line)?;
         }
         Ok(())
     }
@@ -153,9 +159,9 @@ impl PTBuffer {
     /// Return (line, tidx, te start line)
     fn get_line(&self, pos: DocPos) -> (&str, usize, usize) {
         let (tidx, first) = self.table_idx(pos);
-        let te = self.table[tidx];
+        let te = &self.table[tidx];
         let rem = pos.y - first;
-        let line = self.match_table(&te.which)[te.start + rem];
+        let line = &self.match_table(&te.which)[te.start + rem];
         (&line, tidx, first)
     }
 
@@ -317,6 +323,8 @@ mod test {
     use super::*;
 
     mod buffer {
+        use crate::render::BufId;
+
         use super::*;
 
         /*
@@ -386,7 +394,8 @@ mod test {
 
         fn test_trait_construct_passage<B>() where B: Buffer {
             let mut b = B::from_string("".to_string());
-            b.insert_char(DocPos { x: 0, y: 0 }, 'H');
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+            b.insert_char(&mut ctx, 'H');
         }
 
     }

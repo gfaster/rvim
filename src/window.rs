@@ -27,14 +27,14 @@ use unicode_truncate::UnicodeTruncateStr;
 /// BufCtx only interact with Buffers when the BufCtx functions are called.
 #[derive(Clone, Copy)]
 pub struct BufCtx {
-    buf_id: BufId,
+    pub buf_id: BufId,
 
     /// I use DocPos rather than a flat offset to more easily handle linewise operations, which
     /// seem to be more common than operations that operate on the flat buffer. It also makes
     /// translation more convienent, especially when the buffer is stored as an array of lines
     /// rather than a flat byte array (although it seems like this would slow transversal?).
-    cursorpos: DocPos,
-    topline: usize
+    pub cursorpos: DocPos,
+    pub topline: usize
 }
 
 impl BufCtx {
@@ -52,11 +52,13 @@ impl BufCtx {
         Self { buf_id: buf, cursorpos: DocPos { x: 0, y: 0 }, topline: 0 }
     }
 
-    pub fn move_cursor<B: Buffer>(&mut self, ctx: &Ctx<B>, dx: isize, dy: isize) {
-        let buf = ctx.getbuf(self.buf_id).unwrap();
+    pub fn move_cursor<B: Buffer>(&mut self, buf: &B, dx: isize, dy: isize) {
         let newy = self.cursorpos.y.saturating_add_signed(dy).clamp(0, buf.linecnt());
         let line = buf.get_lines(self.cursorpos.y..self.cursorpos.y)[0];
         let newx = self.cursorpos.x.saturating_add_signed(dx).clamp(0, line.len());
+
+        self.cursorpos.x = newx;
+        self.cursorpos.y = newy;
     }
 }
 
@@ -183,7 +185,7 @@ impl DispComponent for StatusLine {
 }
 
 pub struct Window {
-    buf_ctx: BufCtx,
+    pub buf_ctx: BufCtx,
     topleft: TermPos,
     botright: TermPos,
     components: Vec<Component>,
@@ -269,19 +271,13 @@ impl Window{
         term::flush();
     }
 
-    pub fn move_cursor<B: Buffer>(&mut self, ctx: &Ctx<B>, dx: isize, dy: isize) {
-        self.buf_ctx.move_cursor(ctx, dx, dy);
-        self.draw(ctx);
-    }
 
-    pub fn insert_char<B: Buffer>(&mut self, ctx: &mut Ctx<B>, c: char) {
-        ctx.getbuf(self.buf_ctx.buf_id).expect("Window has real buffer").insert_char(self.buf_ctx.cursorpos, c);
-    }
-    
-    pub fn delete_char<B: Buffer>(&mut self, ctx: &mut Ctx<B>) {
-        ctx.getbuf(self.buf_ctx.buf_id).expect("Window has real buffer").delete_char(self.buf_ctx.cursorpos);
-    }
-
+    /// Why doesn't Window have the ability to move its own cursor?
+    ///
+    /// I think it will make things easier if only the buffer context is able to move the cursor.
+    /// Otherwise the window would either a) have to deal directly with buffers, or b) violate type
+    /// saftey by having both an immutable reference to Ctx and a mutable reference to a member of
+    /// Ctx
     pub fn cursorpos(&self) -> TermPos {
         self.buf_ctx.win_pos(self)
     }
@@ -361,8 +357,6 @@ mod test {
     #[test]
     fn scroll_moves_topline() {
         let mut ctx = scroll_context();
-        assert_eq!(ctx.window.buf_ctx.topline, 0);
-        ctx.window.move_cursor(&ctx, 0, 10);
         assert_eq!(ctx.window.buf_ctx.topline, 0);
     }
 
