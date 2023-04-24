@@ -1,34 +1,39 @@
 use crate::buffer::Buffer;
-use std::ops::Range;
 use enum_dispatch::enum_dispatch;
+use std::ops::Range;
 
 enum TextObjectMode {
     Unrestricted,
-    LineRestricted
+    LineRestricted,
 }
 
 pub enum TextObjectModifier {
     Inner,
-    All
+    All,
 }
-
 
 /*
 */
 
 #[enum_dispatch]
-pub trait TextObj<B> where B: Buffer {
+pub trait TextObj<B>
+where
+    B: Buffer,
+{
     fn find_bounds(&self, buf: &B, off: usize, toi: TextObjectModifier) -> Option<Range<usize>>;
 }
 
 #[enum_dispatch(TextObj)]
 pub enum TextObject {
-    WordObject
+    WordObject,
 }
 
 pub struct WordObject;
-impl<B> TextObj<B> for WordObject where B: Buffer {
-    fn find_bounds(&self, buf: &B, off:usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
+impl<B> TextObj<B> for WordObject
+where
+    B: Buffer,
+{
+    fn find_bounds(&self, _buf: &B, _off: usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
         /* let start;
         let end;
         let c = buf.char_atoff(off);

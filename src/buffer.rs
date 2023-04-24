@@ -1,5 +1,5 @@
-use crate::{window::{Window, BufCtx}, term::TermPos};
-use std::{ops::Range, io::Write, path::Path};
+use crate::window::BufCtx;
+use std::{io::Write, ops::Range, path::Path};
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
@@ -7,7 +7,7 @@ use std::{ops::Range, io::Write, path::Path};
 #[derive(Clone, Copy)]
 pub struct DocPos {
     pub x: usize,
-    pub y: usize
+    pub y: usize,
 }
 
 impl DocPos {
@@ -37,7 +37,9 @@ impl DocPos {
 /// into a trait since it seems worthwhile to implement all of them.
 pub trait Buffer {
     fn name(&self) -> &str;
-    fn open(file: &Path) -> std::io::Result<Self> where Self: Sized;
+    fn open(file: &Path) -> std::io::Result<Self>
+    where
+        Self: Sized;
     fn from_string(s: String) -> Self;
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
 
@@ -55,14 +57,14 @@ pub trait Buffer {
 #[derive(Clone, Copy)]
 enum PTType {
     Add,
-    Orig
+    Orig,
 }
 
 // This is linewise, not characterwise
 struct PieceEntry {
     which: PTType,
     start: usize,
-    len: usize
+    len: usize,
 }
 
 /// Piece Table Buffer
@@ -70,26 +72,37 @@ pub struct PTBuffer {
     name: String,
     orig: Vec<String>,
     add: Vec<String>,
-    table: Vec<PieceEntry>
+    table: Vec<PieceEntry>,
 }
 
 impl Buffer for PTBuffer {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn open(file: &Path) -> Result<Self, std::io::Error> {
         let data = std::fs::read_to_string(file)?;
         Ok(Self::from_string(data))
     }
 
-    fn from_string(s: String) -> Self {
+    fn from_string(_s: String) -> Self {
         let name = "new buffer".to_string();
         let orig: Vec<_> = name.lines().map(str::to_string).collect();
         let add = Vec::new();
-        let table = vec![PieceEntry { which: PTType::Orig, start: 0, len: orig.len() }];
-        Self { name , orig, add, table }
+        let table = vec![PieceEntry {
+            which: PTType::Orig,
+            start: 0,
+            len: orig.len(),
+        }];
+        Self {
+            name,
+            orig,
+            add,
+            table,
+        }
     }
 
-    fn delete_char(&mut self, ctx: &mut BufCtx) -> char {
+    fn delete_char(&mut self, _ctx: &mut BufCtx) -> char {
         todo!()
     }
 
@@ -105,23 +118,47 @@ impl Buffer for PTBuffer {
         let addlen = self.add.len() - addstart;
 
         let prevte = self.table.remove(tidx);
-        self.table.insert(tidx, PieceEntry { which: PTType::Add, start: addstart, len: addlen });
+        self.table.insert(
+            tidx,
+            PieceEntry {
+                which: PTType::Add,
+                start: addstart,
+                len: addlen,
+            },
+        );
         if pos.y + 1 < start + tlen {
             // cut above
-            self.table.insert(tidx + 1, PieceEntry { which: prevte.which, start: pos.y + addlen, len: start + tlen - pos.y - 1 })
+            self.table.insert(
+                tidx + 1,
+                PieceEntry {
+                    which: prevte.which,
+                    start: pos.y + addlen,
+                    len: start + tlen - pos.y - 1,
+                },
+            )
         }
         if pos.y > start {
             // cut below
-            self.table.insert(tidx, PieceEntry { which: prevte.which, start: pos.y + addlen, len: start - pos.y})
+            self.table.insert(
+                tidx,
+                PieceEntry {
+                    which: prevte.which,
+                    start: pos.y + addlen,
+                    len: start - pos.y,
+                },
+            )
         }
     }
 
-    fn get_off(&self, pos: DocPos) -> usize {
+    fn get_off(&self, _pos: DocPos) -> usize {
         todo!()
     }
 
     fn get_lines(&self, lines: Range<usize>) -> Vec<&str> {
-        self.lines_fwd_internal(lines.start).take(lines.len()).map(String::as_ref).collect()
+        self.lines_fwd_internal(lines.start)
+            .take(lines.len())
+            .map(String::as_ref)
+            .collect()
     }
 
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -140,18 +177,25 @@ impl PTBuffer {
     fn match_table(&self, which: &PTType) -> &[String] {
         match which {
             PTType::Add => &self.add,
-            PTType::Orig => &self.orig
+            PTType::Orig => &self.orig,
         }
     }
 
     /// Iterator over lines starting at table table entry tidx
     fn lines_fwd_internal(&self, tidx: usize) -> impl Iterator<Item = &String> {
-        self.table[tidx..].iter().flat_map(|te| self.match_table(&te.which)[te.start..].iter().take(te.len))
+        self.table[tidx..]
+            .iter()
+            .flat_map(|te| self.match_table(&te.which)[te.start..].iter().take(te.len))
     }
 
     /// Iterator over reverse-order lines starting at table entry tidx
     fn lines_bck_internal(&self, tidx: usize) -> impl Iterator<Item = &String> {
-        self.table[..tidx].iter().rev().flat_map(|te| self.match_table(&te.which)[te.start..].iter().rev().take(te.len))
+        self.table[..tidx].iter().rev().flat_map(|te| {
+            self.match_table(&te.which)[te.start..]
+                .iter()
+                .rev()
+                .take(te.len)
+        })
     }
 
     /// get the table idx and line at pos
@@ -162,7 +206,7 @@ impl PTBuffer {
         let te = &self.table[tidx];
         let rem = pos.y - first;
         let line = &self.match_table(&te.which)[te.start + rem];
-        (&line, tidx, first)
+        (line, tidx, first)
     }
 
     /// returns the table idx and start line of entry for pos
@@ -170,16 +214,24 @@ impl PTBuffer {
     /// Returns: (table index, te start line)
     fn table_idx(&self, pos: DocPos) -> (usize, usize) {
         let mut line = 0;
-        let tidx = self.table.iter().enumerate().take_while(|x| {
-            if line + x.1.len <= pos.y {
-                line += x.1.len;
-                true
-            } else { false }
-        }).last().unwrap_or((0, &self.table[0])).0;
+        let tidx = self
+            .table
+            .iter()
+            .enumerate()
+            .take_while(|x| {
+                if line + x.1.len <= pos.y {
+                    line += x.1.len;
+                    true
+                } else {
+                    false
+                }
+            })
+            .last()
+            .unwrap_or((0, &self.table[0]))
+            .0;
         (tidx, line)
     }
 }
-
 
 pub struct SimpleBuffer {
     name: String,
@@ -267,7 +319,13 @@ impl<'a> SimpleBuffer {
         let lidx;
         let rem = self.data.remove(pos);
         if rem == '\n' {
-            lidx = self.lines.iter().enumerate().find(|(_, l)| **l == pos + 1).expect("can find newline").0;
+            lidx = self
+                .lines
+                .iter()
+                .enumerate()
+                .find(|(_, l)| **l == pos + 1)
+                .expect("can find newline")
+                .0;
             self.lines.remove(lidx);
         } else {
             lidx = 1 + self
@@ -279,12 +337,7 @@ impl<'a> SimpleBuffer {
                 .unwrap()
                 .0;
         }
-        self.lines
-            .iter_mut()
-            .skip(lidx)
-            .map(|i| *i -= 1)
-            .last();
-
+        self.lines.iter_mut().skip(lidx).map(|i| *i -= 1).last();
     }
 
     pub fn char_atoff(&self, off: usize) -> char {
@@ -293,7 +346,7 @@ impl<'a> SimpleBuffer {
 
     pub fn working_linecnt(&self) -> usize {
         self.lines.len()
-            - if *self.data.as_bytes().last().unwrap_or(&(' ' as u8)) == '\n' as u8 {
+            - if *self.data.as_bytes().last().unwrap_or(&b' ') == b'\n' {
                 1
             } else {
                 0
@@ -309,14 +362,22 @@ impl<'a> SimpleBuffer {
     }
 
     pub fn revoff_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
-        self.data.split_at(off).0.char_indices().map(move |x| (off - x.0, x.1)).rev()
+        self.data
+            .split_at(off)
+            .0
+            .char_indices()
+            .map(move |x| (off - x.0, x.1))
+            .rev()
     }
 
     pub fn off_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
-        self.data.split_at(off).1.char_indices().map(move |x| (off + x.0, x.1))
+        self.data
+            .split_at(off)
+            .1
+            .char_indices()
+            .map(move |x| (off + x.0, x.1))
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -392,13 +453,17 @@ mod test {
             assert_eq!(it.next(), None);
         } */
 
-        fn test_trait_construct_passage<B>() where B: Buffer {
+        fn test_trait_construct_passage<B>()
+        where
+            B: Buffer,
+        {
             let mut b = B::from_string("".to_string());
-            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+            let mut ctx = BufCtx {
+                buf_id: BufId::new(),
+                cursorpos: DocPos { x: 0, y: 0 },
+                topline: 0,
+            };
             b.insert_char(&mut ctx, 'H');
         }
-
     }
-
-
 }

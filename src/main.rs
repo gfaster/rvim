@@ -11,7 +11,7 @@ use nix::sys::{
     signalfd::SigSet,
 };
 use render::Ctx;
-use std::{sync::atomic::AtomicBool, path::Path};
+use std::{path::Path, sync::atomic::AtomicBool};
 
 #[derive(Clone, Copy)]
 pub enum Mode {
@@ -35,7 +35,8 @@ fn main() {
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("src/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
-    let mut ctx: Ctx<PTBuffer> = Ctx::from_file(libc::STDIN_FILENO, &Path::new("src/passage_wrapped.txt")).unwrap();
+    let mut ctx: Ctx<PTBuffer> =
+        Ctx::from_file(libc::STDIN_FILENO, Path::new("src/passage_wrapped.txt")).unwrap();
     ctx.render();
 
     loop {
