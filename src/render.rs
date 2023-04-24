@@ -122,6 +122,7 @@ where
                     .get_mut(&buf_ctx.buf_id)
                     .unwrap()
                     .insert_char(buf_ctx, c.chars().next().unwrap());
+                self.window.draw(self);
             }
             crate::input::Operation::ToInsert => self.mode = Mode::Insert,
             crate::input::Operation::Delete => {
@@ -130,6 +131,7 @@ where
                     .get_mut(&buf_ctx.buf_id)
                     .unwrap()
                     .delete_char(buf_ctx);
+                self.window.draw(self);
             }
             crate::input::Operation::ToNormal => self.mode = Mode::Normal,
             crate::input::Operation::None => (),

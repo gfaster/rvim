@@ -39,12 +39,20 @@ pub struct BufCtx {
 
 impl BufCtx {
     pub fn win_pos(&self, _win: &Window) -> TermPos {
-        let y = (self.topline - self.cursorpos.y) as u32;
+        let y = (self.cursorpos.y - self.topline) as u32;
         let x = self.cursorpos.x as u32;
         TermPos { x, y }
     }
 
-    pub fn draw<B: Buffer>(&self, _win: &Window, _ctx: &Ctx<B>) {}
+    pub fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
+        let buf = ctx.getbuf(self.buf_id).unwrap();
+        let lines = buf.get_lines(self.topline..(self.topline + win.height() as usize));
+        let basepos = win.reltoabs(TermPos { x: 0, y: 0 });
+        for (i, l) in lines.into_iter().enumerate() {
+            term::goto(TermPos { x: basepos.x, y: basepos.y + i as u32 });
+            print!("{:w$}", l, w = win.width() as usize);
+        }
+    }
 
     pub fn new(buf: BufId) -> Self {
         Self {
@@ -60,7 +68,7 @@ impl BufCtx {
             .y
             .saturating_add_signed(dy)
             .clamp(0, buf.linecnt());
-        let line = buf.get_lines(self.cursorpos.y..self.cursorpos.y)[0];
+        let line = buf.get_lines(newy..(newy + 1))[0];
         let newx = self
             .cursorpos
             .x
@@ -239,7 +247,7 @@ impl Window {
             Component::RelLineNumbers(RelLineNumbers),
             Component::StatusLine(StatusLine),
         ];
-        let dirty = false;
+        let dirty = true;
         if !dirty {
             components.push(Component::Welcome(Welcome));
         }

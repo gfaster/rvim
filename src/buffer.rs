@@ -43,6 +43,7 @@ pub trait Buffer {
     fn from_string(s: String) -> Self;
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
 
+    /// get a vec of lines, if `lines` is nonempty, then return must be nonempty
     fn get_lines(&self, lines: Range<usize>) -> Vec<&str>;
 
     /// delete the character immediately to the left of the cursor in ctx
@@ -85,9 +86,9 @@ impl Buffer for PTBuffer {
         Ok(Self::from_string(data))
     }
 
-    fn from_string(_s: String) -> Self {
+    fn from_string(s: String) -> Self {
         let name = "new buffer".to_string();
-        let orig: Vec<_> = name.lines().map(str::to_string).collect();
+        let orig: Vec<_> = s.lines().map(str::to_string).collect();
         let add = Vec::new();
         let table = vec![PieceEntry {
             which: PTType::Orig,
@@ -155,7 +156,10 @@ impl Buffer for PTBuffer {
     }
 
     fn get_lines(&self, lines: Range<usize>) -> Vec<&str> {
-        self.lines_fwd_internal(lines.start)
+        let (tidx, start) = self.table_idx(DocPos { x: 0, y: lines.start });
+        let extra = lines.start - start;
+        self.lines_fwd_internal(tidx)
+            .skip(extra)
             .take(lines.len())
             .map(String::as_ref)
             .collect()
