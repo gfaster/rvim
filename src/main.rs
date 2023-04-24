@@ -29,11 +29,12 @@ fn main() {
         signal::sigaction(signal::Signal::SIGINT, &sig).unwrap();
     }
 
-    let buf = buffer::Buffer::new("src/passage_wrapped.txt").unwrap();
+    // let buf = buffer::Buffer::new("src/passage_wrapped.txt").unwrap();
     // let buf = buffer::Buffer::new("src/crossbox.txt").unwrap();
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("src/lines.txt").unwrap();
-    let mut ctx = Ctx::new(libc::STDIN_FILENO, buf);
+    // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
+    let mut ctx = Ctx::from_file(libc::STDIN_FILENO, "src/passage_wrapped.txt").unwrap();
     ctx.render();
 
     loop {

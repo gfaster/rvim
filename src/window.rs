@@ -1,11 +1,57 @@
+use std::io::Write;
+use crate::render::BufId;
+use crate::textobj::TextObj;
+use crate::buffer::DocPos;
 use crate::buffer::Buffer;
 use crate::render::Ctx;
 use crate::term;
 use crate::term::TermPos;
-use crate::textobj::{TextObj, TextObject};
+use crate::textobj::TextObject;
 use enum_dispatch::enum_dispatch;
 use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
+
+/// structure for a focused buffer. This is not a window and not a buffer. It holds the context of a
+/// buffer editing session for later use. A window can display this, but shouldn't be limited  to
+/// displaying only this. The reason I'm making this separate from window is that I want window to
+/// be strictly an abstraction for rendering and/or focusing. 
+///
+/// I need to think about what niche the command line fits into. Is it another window, or is it its
+/// own thing?
+///
+/// I should consider a "text field" or something similar as a trait for
+/// an area that can be focused and take input.
+///
+/// Adhearing to Rust conventions for this will be challenging I want each Buffer to be referenced
+/// by multiple BufCtx, and to be mutated by multiple BufCtx. I think this should be done by making
+/// BufCtx only interact with Buffers when the BufCtx functions are called.
+#[derive(Clone, Copy)]
+pub struct BufCtx {
+    buf_id: BufId,
+
+    /// I use DocPos rather than a flat offset to more easily handle linewise operations, which
+    /// seem to be more common than operations that operate on the flat buffer. It also makes
+    /// translation more convienent, especially when the buffer is stored as an array of lines
+    /// rather than a flat byte array (although it seems like this would slow transversal?).
+    cursorpos: DocPos,
+    topline: usize
+}
+
+impl BufCtx {
+    pub fn win_pos(&self, _win: &Window) -> TermPos {
+        let y = (self.topline - self.cursorpos.y) as u32;
+        let x = self.cursorpos.x as u32;
+        TermPos { x, y }
+    }
+
+    pub fn draw(&self, win: &Window) {
+
+    }
+
+    pub fn new(buf: BufId) -> Self {
+        Self { buf_id: buf, cursorpos: DocPos { x: 0, y: 0 }, topline: 0 }
+    }
+}
 
 #[derive(Default)]
 struct Padding {
@@ -33,7 +79,7 @@ enum Component {
 }
 
 struct LineNumbers;
-impl<B> DispComponent<B> for LineNumbers {
+impl<B> DispComponent<B> for LineNumbers where B: Buffer {
     fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
@@ -56,7 +102,7 @@ impl<B> DispComponent<B> for LineNumbers {
 }
 
 struct RelLineNumbers;
-impl<B> DispComponent<B> for RelLineNumbers {
+impl<B> DispComponent<B> for RelLineNumbers where B: Buffer {
     fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
@@ -86,7 +132,7 @@ impl<B> DispComponent<B> for RelLineNumbers {
 }
 
 struct Welcome;
-impl<B> DispComponent<B> for Welcome {
+impl<B> DispComponent<B> for Welcome where B: Buffer {
     fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
         if !win.dirty {
             let s = include_str!("../assets/welcome.txt");
@@ -109,12 +155,12 @@ impl<B> DispComponent<B> for Welcome {
 }
 
 struct StatusLine;
-impl<B> DispComponent<B> for StatusLine {
+impl<B> DispComponent<B> for StatusLine where B: Buffer {
     fn padding(&self) -> Padding {
         Padding { top: 0, bottom: 1, left: 0, right: 0 }
     }
 
-    fn draw(&self, win: &Window<B>, ctx: &Ctx<B>) {
+    fn draw(&self, win: &Window, ctx: &Ctx<B>) {
         let base = win.reltoabs(TermPos { x: 0, y: win.height() - 1 });
         term::goto(TermPos { x: base.x - win.padding.left, y: base.y + 1 });
         
@@ -126,8 +172,8 @@ impl<B> DispComponent<B> for StatusLine {
     }
 }
 
-pub struct Window<B> where B: Buffer {
-    buf: B,
+pub struct Window {
+    buf_ctx: BufCtx,
     topline: usize,
     cursorpos: TermPos,
     cursoroff: usize,
@@ -138,13 +184,13 @@ pub struct Window<B> where B: Buffer {
     dirty: bool
 }
 
-impl Window {
-    pub fn new(buf: Buffer) -> Self {
+impl Window{
+    pub fn new(buf: BufId) -> Self {
         let (terminal_size::Width(tw), terminal_size::Height(th)) = terminal_size().unwrap_or((terminal_size::Width(80), terminal_size::Height(40)));
         Self::new_withdim(buf, TermPos { x: 0, y: 0 }, tw as u32, th as u32)
     }
 
-    pub fn new_withdim(buf: Buffer, topleft: TermPos, width: u32, height: u32) -> Self {
+    pub fn new_withdim(buf: BufId, topleft: TermPos, width: u32, height: u32) -> Self {
         let mut components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
         let dirty = buf.len() != 0;
         if !dirty {
@@ -169,7 +215,7 @@ impl Window {
             },
         );
         Self {
-            buf,
+            buf_ctx: BufCtx::new(buf),
             topline: 0,
             cursoroff: 0,
             cursorpos: TermPos { x: 0, y: 0 },
@@ -211,79 +257,7 @@ impl Window {
         }
     }
 
-    pub fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let prev_line = self
-            .buf
-            .lines_start()
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, off)| **off <= self.cursoroff)
-            .unwrap()
-            .0;
-        let prev_lineoff = self.cursoroff - self.buf.lines_start()[prev_line];
-        let newline = prev_line
-            .saturating_add_signed(dy)
-            .clamp(0, self.buf.working_linecnt() - 1);
-        let newline_range = self.buf.line_range(newline);
-
-        if newline_range.len() > 0 {
-        self.cursoroff = (newline_range.start as isize + dx + prev_lineoff as isize)
-            .clamp(newline_range.start as isize, newline_range.end as isize - 1)
-            as usize;
-        } else {
-            self.cursoroff = newline_range.start;
-        }
-
-        let x = self.cursoroff - newline_range.start;
-
-        // move window if it's off the screen
-        match newline as isize - self.topline as isize {
-            l if l < 0 => self.topline -= l.unsigned_abs(),
-            l if l >= self.height() as isize => {
-                self.topline += (l - self.height() as isize) as usize + 1
-            }
-            _ => (),
-        }
-
-        let y = newline - self.topline;
-
-        // this should be screen space
-        assert!((x as u32) < self.width());
-        assert!((y as u32) < self.height());
-        self.cursorpos = TermPos {
-            x: x as u32,
-            y: y as u32,
-        };
-    }
-
-    /// get the lines that can be displayed - going to have to be done at a later date, linewrap
-    /// trimming whitespace is an absolute nightmare
-    fn truncated_lines(&self) -> impl Iterator<Item = &str> {
-        // self.buf.get_lines(self.topline..(self.topline + (self.botright.y - self.topleft.y) as usize))
-        //     .flat_map(|x| wrap(x, (self.botright.x - self.topleft.x) as usize)).take((self.botright.y - self.topleft.y) as usize);
-
-        self.buf
-            .get_lines(self.topline..(self.topline + self.height() as usize))
-            .map(|l| l.unicode_truncate(self.width() as usize).0)
-    }
-
-    /// get the length (in bytes) of the underlying buffer each screenspace line represents. This
-    /// is a separate function because `&str.lines()` does not include newlines, so that data is
-    /// lost in the process of wrapping
-    fn truncated_lines_len(&self) -> impl Iterator<Item = usize> + '_ {
-        // self.buf.get_lines(self.topline..(self.topline + (self.botright.y - self.topleft.y) as usize))
-        //     .flat_map(|x| {
-        //         let mut v: Vec<usize> = wrap(x, (self.botright.x - self.topleft.x) as usize).into_iter().map(|wl| wl.len()).collect();
-        //         *v.last_mut().unwrap() += 1;
-        //         v.into_iter()
-        //     }).collect()
-        self.buf
-            .get_lines(self.topline..(self.topline + self.height() as usize))
-            .map(|l| l.unicode_truncate(self.width() as usize).1)
-    }
-
-    pub fn draw(&self, ctx: &Ctx) {
+    pub fn draw<B: Buffer>(&self, ctx: &Ctx<B>) {
         term::rst_cur();
         self.truncated_lines()
             .take(self.height() as usize)
@@ -298,64 +272,33 @@ impl Window {
         term::flush();
     }
 
-    /// recalculate cursoroff based on cursorpos
-    fn get_off(&self) -> usize {
-        self
-            .buf
-            .get_lines(0..self.topline)
-            .fold(0, |acc, l| acc + l.len() + 1)
-        + self
-            .truncated_lines()
-            .take(self.cursorpos.y as usize)
-            .fold(0, |acc, l| acc + l.len() + 1)
-        + self.cursorpos.x as usize
-    }
+}
 
-    pub fn insert_char(&mut self, c: char) {
-        let off = self.cursoroff;
-        if !self.dirty {
-            self.clear();
-            self.dirty = true;
+impl Write for Window {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut amt = 0;
+        for (i, line) in buf.split(|b| *b == '\n' as u8).chain([].repeat(self.height() as usize)).enumerate().take(self.height() as usize) {
+            amt += line.len();
+            term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
+            print!("{}", String::from_utf8_lossy(line).unicode_truncate(self.width() as usize).0)
         }
-        match c {
-            '\r' => {
-                self.buf.insert_char(off, '\n');
-                self.move_cursor(-(self.width() as isize), 1);
-            }
-            _ => {
-                self.buf.insert_char(off, c);
-                self.move_cursor(1, 0);
-            }
-        }
+
+        Ok(amt)
     }
 
-    fn set_cursoroff(&mut self, newoff: usize) {
-        self.cursoroff = newoff;
-    }
-
-    /// deletes the character to the left of the cursor
-    pub fn delete_char(&mut self) {
-        if self.cursoroff == 0 {return};
-
-        self.buf.delete_char(self.cursoroff - 1);
-        self.move_cursor(-1, 0);
-    }
-
-    pub fn delete_range(&mut self, t: &TextObject) -> Option<()>{
-        let r = t.find_bounds(&self.buf, self.cursoroff, crate::textobj::TextObjectModifier::Inner)?;
-        let start = r.start;
-        r.map(|_| self.buf.delete_char(start)).last();
-        self.set_cursoroff(start);
-        self.move_cursor(0, 0);
-        Some(())
+    fn flush(&mut self) -> std::io::Result<()> {
+        term::flush();
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::buffer::PTBuffer;
+
     use super::*;
 
-    fn basic_window() -> Window {
+    fn basic_window() -> Window<PTBuffer> {
         let b = Buffer::new_fromstring("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
         Window {
             buf: b,
@@ -370,7 +313,7 @@ mod test {
         }
     }
 
-    fn blank_window() -> Window {
+    fn blank_window() -> Window<PTBuffer> {
         let b = Buffer::new_fromstring("".to_string());
         Window {
             buf: b,

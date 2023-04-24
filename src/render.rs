@@ -6,9 +6,16 @@ use crate::window::*;
 use crate::{buffer::*, Mode};
 use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
+use std::collections::BTreeMap;
 use std::os::unix::io::RawFd;
+use std::path::Path;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BufId(usize);
 
 pub struct Ctx<B> where B: Buffer {
+    id_counter: usize,
+    buffers: std::collections::BTreeMap<BufId, B>,
     termios: Termios,
     orig: Termios,
     pub term: RawFd,
@@ -16,8 +23,12 @@ pub struct Ctx<B> where B: Buffer {
     pub mode: Mode,
 }
 
-impl Ctx {
-    pub fn new(term: RawFd, buf: Buffer) -> Self {
+impl<B> Ctx<B> where B: Buffer {
+    pub fn from_file(term: RawFd, file: &Path) -> std::io::Result<Self> {
+        let buf = B::open(file)?;
+        Ok(Self::from_buffer(term, buf))
+    }
+    pub fn from_buffer(term: RawFd, buf: B) -> Self {
         term::altbuf_enable();
         term::flush();
         let mut termios = termios::tcgetattr(term).unwrap();
@@ -26,10 +37,11 @@ impl Ctx {
         termios.local_flags.remove(LocalFlags::ECHO);
         termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
-
-        let window = Window::new(buf);
-
+        let bufid = BufId(1);
+        let window = Window::new(bufid);
         Self {
+            id_counter: 2,
+            buffers: BTreeMap::from([(bufid, buf)]),
             termios,
             orig,
             term,
@@ -69,7 +81,7 @@ impl Ctx {
     }
 }
 
-impl Drop for Ctx {
+impl<B: Buffer> Drop for Ctx<B> {
     fn drop(&mut self) {
         termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap_or(());
     }

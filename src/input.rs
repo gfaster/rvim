@@ -1,3 +1,4 @@
+use crate::buffer::Buffer;
 use crate::textobj::TextObject;
 use std::io::stdin;
 use std::io::Read;
@@ -35,7 +36,7 @@ pub struct Action {
     pub repeat: Option<u32>
 }
 
-pub fn handle_input(ctx: &Ctx) -> Option<Action> {
+pub fn handle_input<B>(ctx: &Ctx<B>) -> Option<Action> where B: Buffer{
     match ctx.mode {
         Mode::Normal => handle_normal_mode(),
         Mode::Insert => Some({

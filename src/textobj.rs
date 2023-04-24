@@ -27,9 +27,9 @@ pub enum TextObject {
 }
 
 pub struct WordObject;
-impl<B> TextObj<B> for WordObject {
+impl<B> TextObj<B> for WordObject where B: Buffer {
     fn find_bounds(&self, buf: &B, off:usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
-        let start;
+        /* let start;
         let end;
         let c = buf.char_atoff(off);
         if c.is_whitespace() {
@@ -42,6 +42,7 @@ impl<B> TextObj<B> for WordObject {
             start = buf.revoff_chars(off).find(|(_, c)| c.is_ascii_alphanumeric() || c.is_whitespace())?.0;
             end = buf.off_chars(off).find(|(_, c)| c.is_ascii_alphanumeric() || c.is_whitespace() )?.0;
         };
-        Some(start..end)
+        Some(start..end) */
+        todo!()
     }
 }
