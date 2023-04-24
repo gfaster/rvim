@@ -45,6 +45,7 @@ pub trait Buffer {
     fn delete_char(&mut self, afterpos: DocPos) -> char;
     fn insert_char(&mut self, pos: DocPos, c: char);
     fn get_off(&self, pos: DocPos) -> usize;
+    fn linecnt(&self) -> usize;
 }
 
 enum PTType {
@@ -122,6 +123,10 @@ impl Buffer for PTBuffer {
             writeln!(writer, "{}", line);
         }
         Ok(())
+    }
+
+    fn linecnt(&self) -> usize {
+        self.table.iter().map(|te| te.len).sum()
     }
 }
 

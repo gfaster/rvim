@@ -4,6 +4,7 @@ use crate::input::Operation;
 use crate::term;
 use crate::window::*;
 use crate::{buffer::*, Mode};
+use libc::STDIN_FILENO;
 use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
 use std::collections::BTreeMap;
@@ -22,6 +23,26 @@ pub struct Ctx<B> where B: Buffer {
     pub window: Window,
     pub mode: Mode,
 }
+
+#[cfg(test)]
+impl<B> Ctx<B> where B: Buffer {
+    pub fn new_testing(buf: B) -> Self {
+        let term = STDIN_FILENO;
+        let termios = termios::tcgetattr(term).unwrap();
+        let bufid = BufId(1);
+        let window = Window::new(bufid);
+        Self {
+            id_counter: 2,
+            buffers: BTreeMap::from([(bufid, buf)]),
+            termios,
+            orig: termios.clone(),
+            term,
+            mode: Mode::Normal,
+            window,
+        }
+    }
+}
+
 
 impl<B> Ctx<B> where B: Buffer {
     pub fn from_file(term: RawFd, file: &Path) -> std::io::Result<Self> {
@@ -50,19 +71,23 @@ impl<B> Ctx<B> where B: Buffer {
         }
     }
 
+    pub fn getbuf_mut(&mut self, buf: BufId) -> Option<&mut B> {
+        self.buffers.get_mut(&buf)
+    }
+
+    pub fn getbuf(&self, buf: BufId) -> Option<&B> {
+        self.buffers.get(&buf)
+    }
+
     pub fn render(&self) {
         self.window.draw(self);
     }
 
     pub fn process_action(&mut self, action: Action) {
-        if let (Some(Motion::TextObj(m)), Operation::Delete) = (&action.motion, &action.operation) {
-            self.window.delete_range(m);
-            return;
-        }
 
         match action.motion {
             Some(m) => match m {
-                Motion::ScreenSpace { dy, dx } => self.window.move_cursor(dx, dy),
+                Motion::ScreenSpace { dy, dx } => self.window.move_cursor(self, dx, dy),
                 Motion::BufferSpace { doff: _ } => todo!(),
                 Motion::TextObj(_) => todo!()
             },
@@ -71,9 +96,9 @@ impl<B> Ctx<B> where B: Buffer {
 
         match action.operation {
             crate::input::Operation::Change => todo!(),
-            crate::input::Operation::Insert(c) => self.window.insert_char(c.chars().next().unwrap()),
+            crate::input::Operation::Insert(c) => self.window.insert_char(self, c.chars().next().unwrap()),
             crate::input::Operation::ToInsert => self.mode = Mode::Insert,
-            crate::input::Operation::Delete => self.window.delete_char(),
+            crate::input::Operation::Delete => self.window.delete_char(self),
             crate::input::Operation::ToNormal => self.mode = Mode::Normal,
             crate::input::Operation::None => (),
             crate::input::Operation::Replace(_) => todo!()

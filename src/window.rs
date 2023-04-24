@@ -44,12 +44,19 @@ impl BufCtx {
         TermPos { x, y }
     }
 
-    pub fn draw(&self, win: &Window) {
+    pub fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
 
     }
 
     pub fn new(buf: BufId) -> Self {
         Self { buf_id: buf, cursorpos: DocPos { x: 0, y: 0 }, topline: 0 }
+    }
+
+    pub fn move_cursor<B: Buffer>(&mut self, ctx: &Ctx<B>, dx: isize, dy: isize) {
+        let buf = ctx.getbuf(self.buf_id).unwrap();
+        let newy = self.cursorpos.y.saturating_add_signed(dy).clamp(0, buf.linecnt());
+        let line = buf.get_lines(self.cursorpos.y..self.cursorpos.y)[0];
+        let newx = self.cursorpos.x.saturating_add_signed(dx).clamp(0, line.len());
     }
 }
 
@@ -62,9 +69,9 @@ struct Padding {
 }
 
 #[enum_dispatch]
-trait DispComponent<B> where B: Buffer{
+trait DispComponent {
     /// write the component
-    fn draw(&self, win: &Window, ctx: &Ctx<B>);
+    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>);
 
     /// amount of padding needed left, top, bottom, right
     fn padding(&self) -> Padding;
@@ -79,15 +86,15 @@ enum Component {
 }
 
 struct LineNumbers;
-impl<B> DispComponent<B> for LineNumbers where B: Buffer {
-    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
+impl DispComponent for LineNumbers {
+    fn draw<B: Buffer>(&self, win: &Window, _ctx: &Ctx<B>) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
             term::goto(TermPos {
                 x: winbase.x - 4,
                 y: winbase.y,
             });
-            print!("{:4}", l as usize + win.topline + 1);
+            print!("{:4}", l as usize + win.buf_ctx.topline + 1);
         }
     }
 
@@ -102,8 +109,10 @@ impl<B> DispComponent<B> for LineNumbers where B: Buffer {
 }
 
 struct RelLineNumbers;
-impl<B> DispComponent<B> for RelLineNumbers where B: Buffer {
-    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
+impl DispComponent for RelLineNumbers {
+    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
+        let linecnt = ctx.getbuf(win.buf_ctx.buf_id).unwrap().linecnt();
+        let y = win.cursorpos().y;
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
 
@@ -111,10 +120,11 @@ impl<B> DispComponent<B> for RelLineNumbers where B: Buffer {
                 x: winbase.x - 5,
                 y: winbase.y,
             });
-            if l == win.cursorpos.y {
-                print!("\x1b[1;32m{: >3} \x1b[0m", l as usize + win.topline + 1);
-            } else if l as usize + win.topline < win.buf.working_linecnt() {
-                print!("\x1b[1;32m{: >4}\x1b[0m", win.cursorpos.y.abs_diff(l));
+
+            if l == y {
+                print!("\x1b[1;32m{: >3} \x1b[0m", l as usize + win.buf_ctx.topline + 1);
+            } else if l as usize + win.buf_ctx.topline < linecnt {
+                print!("\x1b[1;32m{: >4}\x1b[0m", y.abs_diff(l));
             } else {
                 print!("{: >4}", ' ');
             }
@@ -132,8 +142,8 @@ impl<B> DispComponent<B> for RelLineNumbers where B: Buffer {
 }
 
 struct Welcome;
-impl<B> DispComponent<B> for Welcome where B: Buffer {
-    fn draw(&self, win: &Window, _ctx: &Ctx<B>) {
+impl DispComponent for Welcome {
+    fn draw<B: Buffer>(&self, win: &Window, _ctx: &Ctx<B>) {
         if !win.dirty {
             let s = include_str!("../assets/welcome.txt");
             let top = (win.height() - s.lines().count() as u32)/2;
@@ -155,12 +165,12 @@ impl<B> DispComponent<B> for Welcome where B: Buffer {
 }
 
 struct StatusLine;
-impl<B> DispComponent<B> for StatusLine where B: Buffer {
+impl DispComponent for StatusLine {
     fn padding(&self) -> Padding {
         Padding { top: 0, bottom: 1, left: 0, right: 0 }
     }
 
-    fn draw(&self, win: &Window, ctx: &Ctx<B>) {
+    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
         let base = win.reltoabs(TermPos { x: 0, y: win.height() - 1 });
         term::goto(TermPos { x: base.x - win.padding.left, y: base.y + 1 });
         
@@ -168,15 +178,12 @@ impl<B> DispComponent<B> for StatusLine where B: Buffer {
             crate::Mode::Normal => print!("\x1b[42;1;30m NORMAL \x1b[0m"),
             crate::Mode::Insert => print!("\x1b[44;1;30m INSERT \x1b[0m"),
         }
-        print!("\x1b[40m {: <x$}\x1b[0m",win.buf.name(), x = (win.width() + win.padding.left + win.padding.right - 9) as usize);
+        print!("\x1b[40m {: <x$}\x1b[0m",ctx.getbuf(win.buf_ctx.buf_id).unwrap().name(), x = (win.width() + win.padding.left + win.padding.right - 9) as usize);
     }
 }
 
 pub struct Window {
     buf_ctx: BufCtx,
-    topline: usize,
-    cursorpos: TermPos,
-    cursoroff: usize,
     topleft: TermPos,
     botright: TermPos,
     components: Vec<Component>,
@@ -192,7 +199,7 @@ impl Window{
 
     pub fn new_withdim(buf: BufId, topleft: TermPos, width: u32, height: u32) -> Self {
         let mut components = vec![Component::RelLineNumbers(RelLineNumbers), Component::StatusLine(StatusLine)];
-        let dirty = buf.len() != 0;
+        let dirty = false;
         if !dirty {
             components.push(Component::Welcome(Welcome));
         }
@@ -216,9 +223,6 @@ impl Window{
         );
         Self {
             buf_ctx: BufCtx::new(buf),
-            topline: 0,
-            cursoroff: 0,
-            cursorpos: TermPos { x: 0, y: 0 },
             topleft: TermPos {
                 x: topleft.x + padding.left,
                 y: topleft.y + padding.top,
@@ -259,19 +263,30 @@ impl Window{
 
     pub fn draw<B: Buffer>(&self, ctx: &Ctx<B>) {
         term::rst_cur();
-        self.truncated_lines()
-            .take(self.height() as usize)
-            .enumerate()
-            .map(|(i, l)| {
-                term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
-                print!("{:<w$}", l.trim_end_matches('\n'), w = self.width() as usize);
-            })
-            .last();
+        self.buf_ctx.draw(self, ctx);
         self.components.iter().map(|x| x.draw(self, ctx)).last();
-        term::goto(self.reltoabs(self.cursorpos));
+        term::goto(self.reltoabs(self.buf_ctx.win_pos(self)));
         term::flush();
     }
 
+    pub fn move_cursor<B: Buffer>(&mut self, ctx: &Ctx<B>, dx: isize, dy: isize) {
+        self.buf_ctx.move_cursor(ctx, dx, dy);
+        self.draw(ctx);
+    }
+
+    pub fn insert_char<B: Buffer>(&mut self, ctx: &mut Ctx<B>, c: char) {
+        ctx.getbuf(self.buf_ctx.buf_id).expect("Window has real buffer").insert_char(self.buf_ctx.cursorpos, c);
+    }
+    
+    pub fn delete_char<B: Buffer>(&mut self, ctx: &mut Ctx<B>) {
+        ctx.getbuf(self.buf_ctx.buf_id).expect("Window has real buffer").delete_char(self.buf_ctx.cursorpos);
+    }
+
+    pub fn cursorpos(&self) -> TermPos {
+        self.buf_ctx.win_pos(self)
+    }
+
+    // pub fn insert_char<B: Buffer>(&mut self,
 }
 
 impl Write for Window {
@@ -298,103 +313,57 @@ mod test {
 
     use super::*;
 
-    fn basic_window() -> Window<PTBuffer> {
-        let b = Buffer::new_fromstring("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
-        Window {
-            buf: b,
-            topline: 0,
-            cursorpos: TermPos { x: 0, y: 0 },
-            cursoroff: 0,
-            topleft: TermPos { x: 0, y: 0 },
-            botright: TermPos { x: 7, y: 32 },
-            components: vec![],
-            padding: Padding::default(),
-            dirty: true
-        }
-    }
-
-    fn blank_window() -> Window<PTBuffer> {
-        let b = Buffer::new_fromstring("".to_string());
-        Window {
-            buf: b,
-            topline: 0,
-            cursorpos: TermPos { x: 0, y: 0 },
-            cursoroff: 0,
+    fn basic_context() -> Ctx<PTBuffer> {
+        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+        let mut ctx = Ctx::new_testing(b);
+        let bufid = ctx.window.buf_ctx.buf_id;
+        ctx.window = Window {
+            buf_ctx: BufCtx {buf_id: bufid, cursorpos: DocPos { x: 0, y: 0 }, topline: 0},
             topleft: TermPos { x: 0, y: 0 },
             botright: TermPos { x: 7, y: 32 },
             components: vec![],
             padding: Padding::default(),
             dirty: false
-        }
+        };
+        ctx
+    }
+
+    fn scroll_context() -> Ctx<PTBuffer> {
+        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
+        let mut ctx = Ctx::new_testing(b);
+        let bufid = ctx.window.buf_ctx.buf_id;
+        ctx.window = Window {
+            buf_ctx: BufCtx {buf_id: bufid, cursorpos: DocPos { x: 0, y: 0 }, topline: 0},
+            topleft: TermPos { x: 0, y: 0 },
+            botright: TermPos { x: 7, y: 10 },
+            components: vec![],
+            padding: Padding::default(),
+            dirty: false
+        };
+        ctx
+    }
+
+    fn blank_context() -> Ctx<PTBuffer> {
+        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+        let mut ctx = Ctx::new_testing(b);
+        let bufid = ctx.window.buf_ctx.buf_id;
+        ctx.window = Window {
+            buf_ctx: BufCtx {buf_id: bufid, cursorpos: DocPos { x: 0, y: 0 }, topline: 0},
+            topleft: TermPos { x: 0, y: 0 },
+            botright: TermPos { x: 7, y: 32 },
+            components: vec![],
+            padding: Padding::default(),
+            dirty: false
+        };
+        ctx
     }
 
     #[test]
-    fn test_insert_blank_window() {
-        let mut w = blank_window();
-        w.insert_char('\n');
-        w.insert_char('\n');
-        w.insert_char('\n');
-    }
-
-    #[test]
-    fn test_move_in_blank_window() {
-        let mut w = blank_window();
-        w.move_cursor(0, 1);
-        w.move_cursor(1, 0);
-        assert_eq!(w.cursoroff, 0);
-        assert_eq!(w.cursorpos, TermPos {x: 0, y: 0});
-    }
-
-    #[test]
-    fn test_truncated_lines_len() {
-        let w = basic_window();
-        assert_eq!(
-            w.truncated_lines_len().collect::<Vec<_>>(),
-            vec![1, 1, 2, 3, 4, 0, 6, 7]
-        )
-    }
-
-    #[test]
-    fn test_move_cursor_down_basic() {
-        let mut w = basic_window();
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 0 });
-        assert_eq!(w.cursoroff, 0); // 0
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 1 });
-        assert_eq!(w.cursoroff, 2); // 1
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 2 });
-        assert_eq!(w.cursoroff, 4); // 22
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 3 });
-        assert_eq!(w.cursoroff, 7); // 333
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 4 });
-        assert_eq!(w.cursoroff, 11); // 4444
-    }
-
-    #[test]
-    fn test_move_cursor_down_truncated() {
-        let mut w = basic_window();
-        w.cursoroff = 11;
-        w.cursorpos = TermPos { x: 0, y: 0 };
-        w.topline = 4;
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 1 });
-        assert_eq!(w.cursoroff, 16); // LF
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 2 });
-        assert_eq!(w.cursoroff, 17); // notrnc
-
-        w.move_cursor(0, 1);
-        assert_eq!(w.cursorpos, TermPos { x: 0, y: 3 });
-        assert_eq!(w.cursoroff, 24); // "truncated line"
+    fn scroll_moves_topline() {
+        let mut ctx = scroll_context();
+        assert_eq!(ctx.window.buf_ctx.topline, 0);
+        ctx.window.move_cursor(&ctx, 0, 10);
+        assert_eq!(ctx.window.buf_ctx.topline, 0);
     }
 
 
