@@ -118,10 +118,10 @@ where
             crate::input::Operation::Change => todo!(),
             crate::input::Operation::Insert(c) => {
                 let buf_ctx = &mut self.window.buf_ctx;
-                self.buffers
+                let buf = self.buffers
                     .get_mut(&buf_ctx.buf_id)
-                    .unwrap()
-                    .insert_char(buf_ctx, c.chars().next().unwrap());
+                    .unwrap();
+                buf.insert_char(buf_ctx, c.chars().next().unwrap());
                 self.window.draw(self);
             }
             crate::input::Operation::ToInsert => self.mode = Mode::Insert,
