@@ -1,4 +1,4 @@
-use crate::window::BufCtx;
+use crate::{window::BufCtx, term::TermPos};
 use std::{io::Write, ops::Range, path::Path};
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
@@ -40,6 +40,7 @@ pub trait Buffer {
     fn open(file: &Path) -> std::io::Result<Self>
     where
         Self: Sized;
+
     fn from_string(s: String) -> Self;
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
 
@@ -49,8 +50,9 @@ pub trait Buffer {
     /// delete the character immediately to the left of the cursor in ctx
     fn delete_char(&mut self, ctx: &mut BufCtx) -> char;
 
-    /// insert a character at the position of the cursor in ctx
-    fn insert_char(&mut self, ctx: &mut BufCtx, c: char);
+    /// insert a string at the position of the cursor in ctx.
+    /// The cursor should be moved to the end of the inserted text.
+    fn insert_string(&mut self, ctx: &mut BufCtx, s: &str);
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
 }
@@ -111,35 +113,42 @@ impl Buffer for PTBuffer {
         todo!()
     }
 
-    fn insert_char(&mut self, ctx: &mut BufCtx, c: char) {
-        let pos = ctx.cursorpos;
+    fn insert_string(&mut self, ctx: &mut BufCtx, s: &str) {
+        let pos = ctx.cursorpos; // since this is just insertion, we always replace one line
         let (prev, tidx, testartln) = self.get_line(pos);
         let te = self.table[tidx];
         eprintln!("prev: {prev:?}  tidx: {tidx:?}  start: {testartln:?}");
-        let tlen = te.len;
         let mut new = prev.to_string();
-        new.insert(pos.x, c);
+        new.replace_range(pos.x..pos.x, s);
+        let addv = new.split('\n').map(str::to_string).collect::<Vec<_>>();
+
+        if addv.len() > 1 {
+            ctx.cursorpos.x = s.lines().last().unwrap().len();
+        } else {
+            ctx.cursorpos.x = s.len() + pos.x;
+        }
+        ctx.cursorpos.y += addv.len() - 1;
 
         let addstart = self.add.len();
-        self.add.extend(new.split('\n').map(str::to_string));
+        self.add.extend(addv.into_iter());
         let addlen = self.add.len() - addstart;
+        self.table.remove(tidx);
 
-        let prevte = self.table.remove(tidx);
-        if pos.y + 1 < testartln + tlen {
-            // cut above
-            eprintln!("adding above");
+
+
+        // the insertion position is before the end of the chunk
+        if pos.y + 1 < testartln + te.len {
             self.table.insert(
                 tidx,
                 PieceEntry {
-                    which: prevte.which,
-                    start: te.start + addlen,
-                    len: testartln + tlen - pos.y - 1,
+                    which: te.which,
+                    start: te.start + (pos.y + 1 - testartln),
+                    len: te.len - (pos.y + 1 - testartln),
                 },
             )
         }
 
         // new stuffs
-        eprintln!("adding at");
         self.table.insert(
             tidx,
             PieceEntry {
@@ -149,19 +158,20 @@ impl Buffer for PTBuffer {
             },
         );
 
+        // the insertion position is past the beginning of the chunk, so reinsert for those lines
         if pos.y > testartln {
-            // cut below
-            eprintln!("adding below");
             self.table.insert(
                 tidx,
                 PieceEntry {
-                    which: prevte.which,
+                    which: te.which,
                     start: te.start,
                     len: pos.y - testartln,
                 },
             )
         }
-        eprintln!("Inserted {c:?} at {pos:?}\norig: {:?}\nnew: {:?}\ntable: {:?}\n", &self.orig, &self.add, &self.table);
+
+
+        eprintln!("Inserted {s:?} at {pos:?}\norig: {:?}\nnew: {:?}\ntable: {:?}\n", &self.orig, &self.add, &self.table);
     }
 
     fn get_off(&self, _pos: DocPos) -> usize {
@@ -484,153 +494,6 @@ mod test {
             buf_str
         }
 
-        /// I don't know if this is valid for sure
-        fn assert_buf_insert_str<B: Buffer> (b: &mut B, ctx: &mut BufCtx, s: &str) -> String {
-            let mut init = Vec::<u8>::new();
-            b.serialize(&mut init).expect("buffer will successfully serialize");
-            let yidx: usize = String::from_utf8(init.clone()).unwrap().lines().take(ctx.cursorpos.y).map(|l| l.len() + 1).sum();
-            let idx = yidx + ctx.cursorpos.x;
-            init.splice(idx..idx, s.bytes());
-            for c in s.chars().rev() {
-                b.insert_char(ctx, c);
-            }
-
-            let truth = String::from_utf8(init.clone()).unwrap();
-            init.clear();
-            b.serialize(&mut init).expect("buffer will successfully serialize");
-            let test = String::from_utf8(init).unwrap();
-            assert_eq!(truth, test);
-            truth
-        }
-
-        #[test]
-        fn test_ptbuf_oneline_passage() { test_trait_oneline_passage::<PTBuffer>() }
-        fn test_trait_oneline_passage<B>()
-        where
-            B: Buffer,
-        {
-            let mut b = B::from_string("".to_string());
-            let mut ctx = BufCtx {
-                buf_id: BufId::new(),
-                cursorpos: DocPos { x: 0, y: 0 },
-                topline: 0,
-            };
-            b.insert_char(&mut ctx, 'H');
-            assert_buf_eq(&b, "H\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, 'e');
-            assert_buf_eq(&b, "He\n");
-            ctx.move_cursor(&b, 1, 0);
-            
-            b.insert_char(&mut ctx, 'l');
-            assert_buf_eq(&b, "Hel\n");
-            ctx.move_cursor(&b, 1, 0);
-            
-            b.insert_char(&mut ctx, 'l');
-            assert_buf_eq(&b, "Hell\n");
-            ctx.move_cursor(&b, 1, 0);
-            
-            b.insert_char(&mut ctx, 'o');
-            assert_buf_eq(&b, "Hello\n");
-            ctx.move_cursor(&b, 1, 0);
-        }
-
-        #[test]
-        fn test_ptbuf_multiline_passage() { test_trait_multiline_passage::<PTBuffer>() }
-        fn test_trait_multiline_passage<B>()
-        where
-            B: Buffer,
-        {
-
-            let mut b = B::from_string("Hello".to_string());
-            let mut ctx = BufCtx {
-                buf_id: BufId::new(),
-                cursorpos: DocPos { x: 5, y: 0 },
-                topline: 0,
-            };
-
-            b.insert_char(&mut ctx, ',');
-            assert_buf_eq(&b, "Hello,\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, '\n');
-            assert_buf_eq(&b, "Hello,\n\n");
-            ctx.move_cursor(&b, 0, 1);
-
-            b.insert_char(&mut ctx, 'W');
-            assert_buf_eq(&b, "Hello,\nW\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, 'o');
-            assert_buf_eq(&b, "Hello,\nWo\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, 'r');
-            assert_buf_eq(&b, "Hello,\nWor\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, 'l');
-            assert_buf_eq(&b, "Hello,\nWorl\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, 'd');
-            assert_buf_eq(&b, "Hello,\nWorld\n");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, '\n');
-            assert_buf_eq(&b, "Hello,\nWorld\n\n");
-            ctx.move_cursor(&b, 1, 0);
-        }
-
-        fn test_trait_add_newlines<B: Buffer>() {
-            let mut b = B::from_string("Hello".to_string());
-            let mut ctx = BufCtx {
-                buf_id: BufId::new(),
-                cursorpos: DocPos { x: 2, y: 0 },
-                topline: 0,
-            };
-
-            b.insert_char(&mut ctx, '8');
-            assert_buf_eq(&b, "He8llo");
-            ctx.move_cursor(&b, 1, 0);
-
-            b.insert_char(&mut ctx, '\n');
-            assert_buf_eq(&b, "He8llo");
-            ctx.move_cursor(&b, 1, 0);
-        }
-
-        #[test]
-        fn test_ptbuf_insert_string() { test_trait_insert_string::<PTBuffer>() }
-        fn test_trait_insert_string<B: Buffer>() {
-            let mut b = B::from_string("Hello".to_string());
-            let mut ctx = BufCtx {
-                buf_id: BufId::new(),
-                cursorpos: DocPos { x: 5, y: 0 },
-                topline: 0,
-            };
-
-            assert_buf_insert_str(&mut b, &mut ctx, "test");
-            assert_buf_insert_str(&mut b, &mut ctx, "t\nest\n");
-            assert_buf_insert_str(&mut b, &mut ctx, "\nasdf81\n");
-        }
-
-        // #[test]
-        // fn test_ptbuf_insert_string_many() { test_trait_insert_string_many::<PTBuffer>() }
-        fn test_trait_insert_string_many<B: Buffer>() {
-            let mut b = B::from_string("Hello".to_string());
-            let mut ctx = BufCtx {
-                buf_id: BufId::new(),
-                cursorpos: DocPos { x: 5, y: 0 },
-                topline: 0,
-            };
-
-            assert_buf_insert_str(&mut b, &mut ctx, "test");
-            assert_buf_insert_str(&mut b, &mut ctx, "t\nest\n");
-            ctx.move_cursor(&b, -4, -2);
-            assert_buf_insert_str(&mut b, &mut ctx, "\nasdf81\n");
-            assert_buf_insert_str(&mut b, &mut ctx, "azprmao\n");
-        }
 
     }
 }

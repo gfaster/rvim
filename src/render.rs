@@ -121,7 +121,7 @@ where
                 let buf = self.buffers
                     .get_mut(&buf_ctx.buf_id)
                     .unwrap();
-                buf.insert_char(buf_ctx, c.chars().next().unwrap());
+                buf.insert_string(buf_ctx, c.replace('\r', "\n").as_str());
                 self.window.draw(self);
             }
             crate::input::Operation::ToInsert => self.mode = Mode::Insert,
