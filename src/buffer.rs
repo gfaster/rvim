@@ -267,151 +267,6 @@ impl PTBuffer {
     }
 }
 
-pub struct SimpleBuffer {
-    name: String,
-    data: String,
-    lines: Vec<usize>,
-}
-
-impl<'a> SimpleBuffer {
-    pub fn new(file: &str) -> Result<Self, std::io::Error> {
-        let data = std::fs::read_to_string(file)?;
-        Ok(Self::new_fromstring(data))
-    }
-
-    pub fn new_fromstring(s: String) -> Self {
-        let data = s;
-        let lines = [0]
-            .into_iter()
-            .chain(data.bytes().enumerate().filter_map(|x| match x.1 {
-                0x0A => Some(x.0 + 1),
-                _ => None,
-            }))
-            .collect();
-
-        Self {
-            name: "new buffer".to_owned(),
-            data,
-            lines,
-        }
-    }
-
-    /// Gets an iterator over lines in a range
-    pub fn get_lines(&'a self, range: Range<usize>) -> impl Iterator<Item = &str> {
-        self.data.lines().skip(range.start).take(range.len())
-    }
-
-    /// Gets an array of byte offsets for the start of each line
-    pub fn lines_start(&self) -> &[usize] {
-        &self.lines
-    }
-
-    /// get the offset of the start of `line`
-    pub fn line_start(&self, line: usize) -> Option<usize> {
-        self.lines.get(line).copied()
-    }
-
-    /// get the virtual start of line - if line doesn't exist, return one past end of buffer
-    pub fn virtual_getline(&self, line: usize) -> usize {
-        self.lines.get(line).map_or_else(|| self.data.len(), |i| *i)
-    }
-
-    /// get the bytes range of the line, ~~not~~ including trailing LF
-    /// I might want to change this to include trailing LF - that gives garuntee that every line is
-    /// at least one character long, and lets me "select" it on screen
-    pub fn line_range(&self, line: usize) -> Range<usize> {
-        self.virtual_getline(line)..self.virtual_getline(line + 1)
-    }
-
-    pub fn insert_char(&mut self, pos: usize, c: char) {
-        if c == '\n' {
-            let start = self
-                .lines
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, i)| **i <= pos)
-                .unwrap()
-                .0;
-            self.lines.insert(start + 1, pos);
-            self.lines
-                .iter_mut()
-                .skip(start + 1)
-                .map(|i| *i += 1)
-                .last();
-        } else {
-            self.lines
-                .iter_mut()
-                .skip_while(|i| **i <= pos)
-                .map(|i| *i += 1)
-                .last();
-        };
-        self.data.insert(pos, c);
-    }
-
-    pub fn delete_char(&mut self, pos: usize) {
-        let lidx;
-        let rem = self.data.remove(pos);
-        if rem == '\n' {
-            lidx = self
-                .lines
-                .iter()
-                .enumerate()
-                .find(|(_, l)| **l == pos + 1)
-                .expect("can find newline")
-                .0;
-            self.lines.remove(lidx);
-        } else {
-            lidx = 1 + self
-                .lines
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, loff)| **loff <= pos)
-                .unwrap()
-                .0;
-        }
-        self.lines.iter_mut().skip(lidx).map(|i| *i -= 1).last();
-    }
-
-    pub fn char_atoff(&self, off: usize) -> char {
-        self.data.split_at(off).1.chars().next().expect("in bounds")
-    }
-
-    pub fn working_linecnt(&self) -> usize {
-        self.lines.len()
-            - if *self.data.as_bytes().last().unwrap_or(&b' ') == b'\n' {
-                1
-            } else {
-                0
-            }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn revoff_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
-        self.data
-            .split_at(off)
-            .0
-            .char_indices()
-            .map(move |x| (off - x.0, x.1))
-            .rev()
-    }
-
-    pub fn off_chars(&self, off: usize) -> impl Iterator<Item = (usize, char)> + '_ {
-        self.data
-            .split_at(off)
-            .1
-            .char_indices()
-            .map(move |x| (off + x.0, x.1))
-    }
-}
 
 #[cfg(test)]
 mod test {
@@ -422,70 +277,6 @@ mod test {
 
         use super::*;
 
-        /*
-        #[test]
-        fn test_ptbuf_chars_fwd() { test_trait_chars_fwd::<PTBuffer>() }
-        fn test_trait_chars_fwd<B>() where B: Buffer {
-            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
-            let mut it = b.chars_fwd(0);
-            assert_eq!(it.next(), Some('0'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('1'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('A'));
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('3'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('4'));
-            assert_eq!(it.next(), None);
-        }
-
-        #[test]
-        fn test_ptbuf_chars_fwd_mid() { test_trait_chars_fwd_mid::<PTBuffer>() }
-        fn test_trait_chars_fwd_mid<B>() where B: Buffer {
-            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
-            let mut it = b.chars_fwd(6);
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('3'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('4'));
-            assert_eq!(it.next(), None);
-        }
-
-        #[test]
-        fn test_ptbuf_chars_bck() { test_trait_chars_bck::<PTBuffer>() }
-        fn test_trait_chars_bck<B>() where B: Buffer {
-            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
-            let mut it = b.chars_bck(11);
-            assert_eq!(it.next(), Some('4'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('3'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('A'));
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('1'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('0'));
-            assert_eq!(it.next(), None);
-        }
-
-        #[test]
-        fn test_ptbuf_chars_bck_mid() { test_trait_chars_bck_mid::<PTBuffer>() }
-        fn test_trait_chars_bck_mid<B>() where B: Buffer {
-            let b = B::from_string("0\n1\n2A2\n3\n4\n".to_string());
-            let mut it = b.chars_bck(4);
-            assert_eq!(it.next(), Some('2'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('1'));
-            assert_eq!(it.next(), Some('\n'));
-            assert_eq!(it.next(), Some('0'));
-            assert_eq!(it.next(), None);
-        } */
         fn assert_buf_eq<B: Buffer> (b: &B, s: &str) -> String {
             let mut out = Vec::<u8>::new();
             b.serialize(&mut out).expect("buffer will successfully serialize");
@@ -494,6 +285,106 @@ mod test {
             buf_str
         }
 
+        fn assert_trait_add_str<B: Buffer> (b: &mut B, ctx: &mut BufCtx,  s: &str) {
+            let mut out = Vec::<u8>::new();
+            b.serialize(&mut out).expect("buffer will serialize");
+            let mut buf_str = String::from_utf8(out.clone()).expect("buffer outputs valid utf-8");
 
+            let pos = ctx.cursorpos;
+            let off = pos.x + buf_str.lines().take(pos.y).map(|l| l.len() + 1).sum::<usize>();
+            buf_str.replace_range(off..off, s);
+            b.insert_string(ctx, s);
+
+            out.clear();
+            b.serialize(&mut out).expect("buffer will serialize");
+            let out_str = String::from_utf8(out).expect("buffer outputs valid utf-8");
+
+            assert_eq!(buf_str, out_str, "inserted string == string insert from buffer");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_basic() { test_trait_insert_basic::<PTBuffer>() }
+        fn test_trait_insert_basic<B: Buffer>() {
+            let mut buf = B::from_string("".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "Hello, World");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_blank() { test_trait_insert_blank::<PTBuffer>() }
+        fn test_trait_insert_blank<B: Buffer>() {
+            let mut buf = B::from_string("".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_multi() { test_trait_insert_multi::<PTBuffer>() }
+        fn test_trait_insert_multi<B: Buffer>() {
+            let mut buf = B::from_string("".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "Hello, ");
+            assert_trait_add_str(&mut buf, &mut ctx, "World!");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_newl() { test_trait_insert_newl::<PTBuffer>() }
+        fn test_trait_insert_newl<B: Buffer>() {
+            let mut buf = B::from_string("".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_multinewl() { test_trait_insert_multinewl::<PTBuffer>() }
+        fn test_trait_insert_multinewl<B: Buffer>() {
+            let mut buf = B::from_string("".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_offset() { test_trait_insert_offset::<PTBuffer>() }
+        fn test_trait_insert_offset<B: Buffer>() {
+            let mut buf = B::from_string("0123456789".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 5, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "0000000");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_offnewl() { test_trait_insert_offnewl::<PTBuffer>() }
+        fn test_trait_insert_offnewl<B: Buffer>() {
+            let mut buf = B::from_string("0123456789".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 5, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_prenewl() { test_trait_insert_prenewl::<PTBuffer>() }
+        fn test_trait_insert_prenewl<B: Buffer>() {
+            let mut buf = B::from_string("0123456789".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "\n");
+        }
+
+        #[test]
+        fn test_ptbuf_insert_multilinestr() { test_trait_insert_multilinestr::<PTBuffer>() }
+        fn test_trait_insert_multilinestr<B: Buffer>() {
+            let mut buf = B::from_string("0123456789".to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 0, y: 0 }, topline: 0 };
+
+            assert_trait_add_str(&mut buf, &mut ctx, "asdf\nzdq\nqwrpi\nmnbv\n");
+            assert_trait_add_str(&mut buf, &mut ctx, "\n\n\n104a9zlq");
+        }
     }
 }
