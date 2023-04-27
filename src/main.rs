@@ -40,13 +40,13 @@ fn main() {
     }
     panic::set_hook(Box::new(panic_handler));
 
-    // let buf = buffer::Buffer::new("src/passage_wrapped.txt").unwrap();
-    // let buf = buffer::Buffer::new("src/crossbox.txt").unwrap();
+    // let buf = buffer::Buffer::new("./assets/test/passage_wrapped.txt").unwrap();
+    // let buf = buffer::Buffer::new("./assets/test/crossbox.txt").unwrap();
     // let buf = buffer::Buffer::new_fromstring(String::new());
-    // let buf = buffer::Buffer::new("src/lines.txt").unwrap();
+    // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
     let mut ctx: Ctx<PTBuffer> =
-        Ctx::from_file(libc::STDIN_FILENO, Path::new("src/passage_wrapped.txt")).unwrap();
+        Ctx::from_file(libc::STDIN_FILENO, Path::new("./assets/test/passage_wrapped.txt")).unwrap();
     ctx.render();
 
     loop {
