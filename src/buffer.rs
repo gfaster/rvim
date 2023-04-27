@@ -124,7 +124,7 @@ impl<B: Buffer> Iterator for BufIter<'_, B> {
                     self.pos.x += 1;
                 }
 
-                let c = line.chars().chain(['\n']).skip(virt.x).next().expect("iterate to real char");
+                let c = line.chars().chain(['\n']).skip(virt.x).next().expect("iterate to real char (does this line have non-ascii?)");
                 Some((virt, c))
             },
             BufIterDir::Backward => todo!(),

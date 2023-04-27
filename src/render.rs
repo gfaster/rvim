@@ -148,7 +148,10 @@ where
             crate::input::Operation::Debug => {
                 let buf_ctx = self.window.buf_ctx;
                 let id = buf_ctx.buf_id;
-                eprintln!("line: {:?}", self.buffers[&id].get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1)));
+                let buf = &self.buffers[&id];
+                let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
+                eprintln!("line: {:?}", lines);
+                eprintln!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
             }
         }
     }

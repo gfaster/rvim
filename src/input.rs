@@ -78,6 +78,9 @@ fn handle_motion(c: char) -> Option<Motion> {
         'j' => Some(Motion::ScreenSpace { dy: 1, dx: 0 }),
         'k' => Some(Motion::ScreenSpace { dy: -1, dx: 0 }),
         'l' => Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
+        '0' => Some(Motion::TextMotion(TextMotion::StartOfLine)),
+        'w' => Some(Motion::TextMotion(TextMotion::WordForward)),
+        '$' => Some(Motion::TextMotion(TextMotion::EndOfLine)),
         _ => None,
     }
 }
@@ -139,13 +142,8 @@ where
 
 fn handle_normal_input(c: char) -> Option<Accepting> {
     match c {
-        'h' | 'j' | 'k' | 'l' => Some(Accepting::Complete(Action {
+        'h' | 'j' | 'k' | 'l' | 'w' | '0' | '$' => Some(Accepting::Complete(Action {
             motion: handle_motion(c),
-            operation: Operation::None,
-            repeat: None,
-        })),
-        'w' => Some(Accepting::Complete(Action {
-            motion: Some(Motion::TextMotion(TextMotion::WordForward)),
             operation: Operation::None,
             repeat: None,
         })),

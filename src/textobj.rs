@@ -28,13 +28,17 @@ where
 }
 
 pub enum TextMotion {
-    WordForward
+    WordForward,
+    StartOfLine,
+    EndOfLine
 }
 
 impl<B: Buffer> TextMot<B> for TextMotion {
     fn find_dest(&self,buf: &B,pos:DocPos) -> Option<DocPos> {
         match self {
             TextMotion::WordForward => WordForward.find_dest(buf, pos),
+            TextMotion::StartOfLine => StartOfLine.find_dest(buf, pos),
+            TextMotion::EndOfLine => EndOfLine.find_dest(buf, pos),
         }
     }
 }
@@ -47,6 +51,27 @@ where
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
         buf.chars_fwd(pos).skip_while(|c| !c.1.is_whitespace()).skip_while(|c| c.1.is_whitespace()).map(|(p, _)| p).next()
+    }
+}
+
+pub struct StartOfLine;
+impl<B> TextMot<B> for StartOfLine
+where
+    B: Buffer,
+{
+    fn find_dest(&self, _buf: &B, pos: DocPos) -> Option<DocPos> {
+        Some(DocPos { x: 0, y: pos.y })
+    }
+}
+
+pub struct EndOfLine;
+impl<B> TextMot<B> for EndOfLine
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let x = buf.get_lines(pos.y..(pos.y + 1)).get(0)?.len();
+        Some(DocPos { x, y: pos.y })
     }
 }
 
