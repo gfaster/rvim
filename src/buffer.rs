@@ -1,13 +1,29 @@
-use crate::{window::BufCtx, term::TermPos};
-use std::{io::Write, ops::Range, path::Path};
+use crate::window::BufCtx;
+use std::{io::Write, ops::{Range, RangeBounds}, path::Path};
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
 /// one-to-one. Also, using usize since it can very well be more than u32::max (though not for now)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DocPos {
     pub x: usize,
     pub y: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DocRange {
+    pub start: DocPos,
+    pub end: DocPos,
+}
+
+impl RangeBounds<DocPos> for DocRange {
+    fn start_bound(&self) -> std::ops::Bound<&DocPos> {
+        std::ops::Bound::Included(&self.start)
+    }
+
+    fn end_bound(&self) -> std::ops::Bound<&DocPos> {
+        std::ops::Bound::Excluded(&self.end)
+    }
 }
 
 impl DocPos {
@@ -53,8 +69,67 @@ pub trait Buffer {
     /// insert a string at the position of the cursor in ctx.
     /// The cursor should be moved to the end of the inserted text.
     fn insert_string(&mut self, ctx: &mut BufCtx, s: &str);
+
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
+
+    
+    /// return the nearest valid position that is not past the end of line or file
+    fn clamp(&self, _pos: DocPos) -> DocPos {todo!()}
+
+
+
+
+    fn chars_fwd(&self, pos: DocPos) -> BufIter<Self> where Self: Sized {
+        BufIter { buf: self, line: None, pos, dir: BufIterDir::Forward }
+    }
+}
+
+
+enum BufIterDir {
+    Forward,
+    Backward,
+}
+
+/// Iterator over the characters in a buffer
+pub struct BufIter<'a, B: Buffer> {
+    buf: &'a B,
+    line: Option<&'a str>,
+    pos: DocPos,
+    dir: BufIterDir,
+}
+
+impl<B: Buffer> Iterator for BufIter<'_, B> {
+    type Item = (DocPos, char);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let virt = self.pos;
+        if virt.y >= self.buf.linecnt() {
+            return None;
+        }
+
+        let line = self.line.unwrap_or_else(|| {
+            let l = self.buf.get_lines(self.pos.y..(self.pos.y + 1))[0];
+            self.line = Some(l);
+            l
+        });
+        match self.dir {
+            BufIterDir::Forward => {
+
+                if virt.x + 1 > line.len() {
+                    self.pos.x = 0;
+                    self.pos.y += 1;
+                    self.line = None;
+                } else {
+                    self.pos.x += 1;
+                }
+
+                let c = line.chars().chain(['\n']).skip(virt.x).next().expect("iterate to real char");
+                Some((virt, c))
+            },
+            BufIterDir::Backward => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +192,7 @@ impl Buffer for PTBuffer {
         let pos = ctx.cursorpos; // since this is just insertion, we always replace one line
         let (prev, tidx, testartln) = self.get_line(pos);
         let te = self.table[tidx];
-        eprintln!("prev: {prev:?}  tidx: {tidx:?}  start: {testartln:?}");
+        // eprintln!("prev: {prev:?}  tidx: {tidx:?}  start: {testartln:?}");
         let mut new = prev.to_string();
         new.replace_range(pos.x..pos.x, s);
         let addv = new.split('\n').map(str::to_string).collect::<Vec<_>>();
@@ -171,7 +246,7 @@ impl Buffer for PTBuffer {
         }
 
 
-        eprintln!("Inserted {s:?} at {pos:?}\norig: {:?}\nnew: {:?}\ntable: {:?}\n", &self.orig, &self.add, &self.table);
+        // eprintln!("Inserted {s:?} at {pos:?}\norig: {:?}\nnew: {:?}\ntable: {:?}\n", &self.orig, &self.add, &self.table);
     }
 
     fn get_off(&self, _pos: DocPos) -> usize {
@@ -385,6 +460,70 @@ mod test {
 
             assert_trait_add_str(&mut buf, &mut ctx, "asdf\nzdq\nqwrpi\nmnbv\n");
             assert_trait_add_str(&mut buf, &mut ctx, "\n\n\n104a9zlq");
+        }
+
+        #[test]
+        fn test_ptbuf_charsfwd_start() { test_trait_charsfwd_start::<PTBuffer>() }
+        fn test_trait_charsfwd_start<B: Buffer>() {
+            let buf = B::from_string("0123456789".to_string());
+            let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '2')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 0}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 0}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 0}, '5')));
+            assert_eq!(it.next(), Some((DocPos { x: 6, y: 0}, '6')));
+            assert_eq!(it.next(), Some((DocPos { x: 7, y: 0}, '7')));
+            assert_eq!(it.next(), Some((DocPos { x: 8, y: 0}, '8')));
+            assert_eq!(it.next(), Some((DocPos { x: 9, y: 0}, '9')));
+            assert_eq!(it.next(), Some((DocPos { x: 10, y: 0}, '\n')));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsfwd_crosslf() { test_trait_charsfwd_crosslf::<PTBuffer>() }
+        fn test_trait_charsfwd_crosslf<B: Buffer>() {
+            let buf = B::from_string("01234\n56789".to_string());
+            let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '2')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 0}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 0}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 0}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 1}, '5')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 1}, '6')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 1}, '7')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 1}, '8')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 1}, '9')));
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 1}, '\n')));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsfwd_empty() { test_trait_charsfwd_empty::<PTBuffer>() }
+        fn test_trait_charsfwd_empty<B: Buffer>() {
+            let buf = B::from_string("".to_string());
+            let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '\n')));
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsfwd_eol() { test_trait_charsfwd_eol::<PTBuffer>() }
+        fn test_trait_charsfwd_eol<B: Buffer>() {
+            let buf = B::from_string("01\n34".to_string());
+            let mut it = buf.chars_fwd(DocPos { x: 2, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 1}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 1}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 1}, '\n')));
+            assert_eq!(it.next(), None);
         }
     }
 }

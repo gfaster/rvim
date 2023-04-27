@@ -1,17 +1,14 @@
+use crate::textobj::TextMotion;
 use crate::buffer::Buffer;
 use crate::textobj::TextObject;
 use std::io::stdin;
 use std::io::Read;
+use crate::textobj::Motion;
 
 use crate::textobj::TextObjectModifier;
 use crate::Ctx;
 use crate::Mode;
 
-pub enum Motion {
-    ScreenSpace { dy: isize, dx: isize },
-    BufferSpace { doff: isize },
-    TextObj(TextObject),
-}
 
 pub enum Operation {
     Change,
@@ -20,6 +17,7 @@ pub enum Operation {
     ToInsert,
     Delete,
     ToNormal,
+    Debug,
     None,
 }
 
@@ -54,12 +52,12 @@ where
                 .next()??;
             eprintln!("{:x}", c as u32);
             match c {
-                '\x1b' => Action {
+                '\x1b' => Action { // escape key, this needs to be more sophisticated for pasting
                     motion: None,
                     operation: Operation::ToNormal,
                     repeat: None,
                 },
-                '\x7f' => Action {
+                '\x7f' | '\x08' => Action { // delete/backspace keys
                     motion: None,
                     operation: Operation::Delete,
                     repeat: None,
@@ -146,6 +144,11 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
             operation: Operation::None,
             repeat: None,
         })),
+        'w' => Some(Accepting::Complete(Action {
+            motion: Some(Motion::TextMotion(TextMotion::WordForward)),
+            operation: Operation::None,
+            repeat: None,
+        })),
         'a' => Some(Accepting::Complete(Action {
             motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
             operation: Operation::ToInsert,
@@ -167,6 +170,11 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
         'c' => Some(Accepting::MotionOrTextObj {
             op: Operation::Change,
         }),
+        'p' => Some(Accepting::Complete(Action {
+            motion: None,
+            operation: Operation::Debug,
+            repeat: None,
+        })),
         _ => None,
     }
 }
@@ -174,11 +182,10 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
 fn handle_normal_mode() -> Option<Action> {
     let mut stdin = stdin().lock();
     let mut wip = Accepting::Normal;
-    while !matches!(wip, Accepting::Complete(_)) {
-        wip = state_machine_step(wip, &mut stdin)?;
-    }
-    match wip {
-        Accepting::Complete(x) => Some(x),
-        _ => panic!("Only complete input sequences should be able to get here"),
+    loop {
+        match wip {
+            Accepting::Complete(x) => return Some(x),
+            _ => wip = state_machine_step(wip, &mut stdin)?
+        };
     }
 }

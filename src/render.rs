@@ -1,7 +1,8 @@
 use crate::input::Action;
-use crate::input::Motion;
+use crate::textobj::Motion;
 
 use crate::term;
+use crate::textobj::TextMot;
 use crate::window::*;
 use crate::{buffer::*, Mode};
 
@@ -111,6 +112,14 @@ where
                 }
                 Motion::BufferSpace { doff: _ } => todo!(),
                 Motion::TextObj(_) => todo!(),
+                Motion::TextMotion(m) => {
+                    let bufid = self.window.buf_ctx.buf_id;
+                    let buf = &self.buffers[&bufid];
+                    let buf_ctx = &mut self.window.buf_ctx;
+                    if let Some(newpos) = m.find_dest(buf, buf_ctx.cursorpos){
+                        buf_ctx.set_pos(buf, newpos);
+                    }
+                },
             }
         }
 
@@ -136,6 +145,11 @@ where
             crate::input::Operation::ToNormal => self.mode = Mode::Normal,
             crate::input::Operation::None => (),
             crate::input::Operation::Replace(_) => todo!(),
+            crate::input::Operation::Debug => {
+                let buf_ctx = self.window.buf_ctx;
+                let id = buf_ctx.buf_id;
+                eprintln!("line: {:?}", self.buffers[&id].get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1)));
+            }
         }
     }
 }

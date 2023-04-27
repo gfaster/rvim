@@ -78,6 +78,10 @@ impl BufCtx {
         self.cursorpos.x = newx;
         self.cursorpos.y = newy;
     }
+
+    pub fn set_pos<B: Buffer> (&mut self, _buf: &B, pos: DocPos) {
+        self.cursorpos = pos;
+    }
 }
 
 #[derive(Default)]

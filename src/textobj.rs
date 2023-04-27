@@ -1,6 +1,5 @@
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, DocRange, DocPos};
 use enum_dispatch::enum_dispatch;
-use std::ops::Range;
 
 enum TextObjectMode {
     Unrestricted,
@@ -12,6 +11,46 @@ pub enum TextObjectModifier {
     All,
 }
 
+pub enum Motion {
+    ScreenSpace { dy: isize, dx: isize },
+    BufferSpace { doff: isize },
+    TextObj(TextObject),
+    TextMotion(TextMotion)
+}
+
+
+#[enum_dispatch]
+pub trait TextMot<B>
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos>;
+}
+
+pub enum TextMotion {
+    WordForward
+}
+
+impl<B: Buffer> TextMot<B> for TextMotion {
+    fn find_dest(&self,buf: &B,pos:DocPos) -> Option<DocPos> {
+        match self {
+            TextMotion::WordForward => WordForward.find_dest(buf, pos),
+        }
+    }
+}
+
+
+pub struct WordForward;
+impl<B> TextMot<B> for WordForward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        buf.chars_fwd(pos).skip_while(|c| !c.1.is_whitespace()).skip_while(|c| c.1.is_whitespace()).map(|(p, _)| p).next()
+    }
+}
+
+
 /*
 */
 
@@ -20,7 +59,7 @@ pub trait TextObj<B>
 where
     B: Buffer,
 {
-    fn find_bounds(&self, buf: &B, off: usize, toi: TextObjectModifier) -> Option<Range<usize>>;
+    fn find_bounds(&self, buf: &B, off: DocPos) -> Option<DocRange>;
 }
 
 #[enum_dispatch(TextObj)]
@@ -28,26 +67,13 @@ pub enum TextObject {
     WordObject,
 }
 
+
 pub struct WordObject;
 impl<B> TextObj<B> for WordObject
 where
     B: Buffer,
 {
-    fn find_bounds(&self, _buf: &B, _off: usize, _toi: TextObjectModifier) -> Option<Range<usize>> {
-        /* let start;
-        let end;
-        let c = buf.char_atoff(off);
-        if c.is_whitespace() {
-            start = buf.revoff_chars(off).find(|(_, c)| !c.is_whitespace() )?.0;
-            end = buf.off_chars(off).find(|(_, c)| !c.is_whitespace() )?.0;
-        } else if c.is_ascii_alphanumeric() {
-            start = buf.revoff_chars(off).find(|(_, c)| !c.is_ascii_alphanumeric() )?.0;
-            end = buf.off_chars(off).find(|(_, c)| !c.is_ascii_alphanumeric() )?.0;
-        } else {
-            start = buf.revoff_chars(off).find(|(_, c)| c.is_ascii_alphanumeric() || c.is_whitespace())?.0;
-            end = buf.off_chars(off).find(|(_, c)| c.is_ascii_alphanumeric() || c.is_whitespace() )?.0;
-        };
-        Some(start..end) */
+    fn find_bounds(&self, _buf: &B, _pos: DocPos) -> Option<DocRange> {
         todo!()
     }
 }
