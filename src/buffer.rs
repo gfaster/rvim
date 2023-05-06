@@ -10,6 +10,24 @@ pub struct DocPos {
     pub y: usize,
 }
 
+impl PartialOrd for DocPos {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let Some(y) = self.y.partial_cmp(&other.y) else { return None };
+        match y {
+            std::cmp::Ordering::Equal => {
+                self.x.partial_cmp(&other.x)
+            },
+            _ => Some(y)
+        }
+    }
+}
+
+impl Ord for DocPos {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).expect("DocPos is comparable")
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DocRange {
     pub start: DocPos,

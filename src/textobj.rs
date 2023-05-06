@@ -30,7 +30,6 @@ impl Word for char {
     fn is_wordchar_extended(&self) -> bool {
         !self.is_whitespace()
     }
-
 }
 
 
@@ -72,6 +71,9 @@ pub enum TextMotion {
 }
 
 impl<B: Buffer> TextMot<B> for TextMotion {
+    // for whatever reason enum_dispatch isn't working here, so I have to do it manually
+    //
+    // ugh.
     fn find_dest(&self,buf: &B,pos:DocPos) -> Option<DocPos> {
         match self {
             TextMotion::StartOfLine => StartOfLine.find_dest(buf, pos),
@@ -233,6 +235,28 @@ where
 #[enum_dispatch(TextObj)]
 pub enum TextObject {
     WordObject,
+    MotionObject(TextMotion)
+}
+
+pub struct MotionObject (TextMotion);
+impl<B> TextObj<B> for MotionObject
+where 
+    B: Buffer
+{
+    fn find_bounds(&self, buf: &B, off: DocPos) -> Option<DocRange> {
+        let Some(finish) = self.0.find_dest(buf, off) else { return None };
+        if finish < off {
+            Some(DocRange { 
+                start: finish,
+                end: off
+            })
+        } else {
+            Some(DocRange {
+                start: off,
+                end: finish 
+            })
+        }
+    }
 }
 
 
