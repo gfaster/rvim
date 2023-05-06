@@ -95,7 +95,8 @@ pub trait Buffer {
     /// return the nearest valid position that is not past the end of line or file
     fn clamp(&self, _pos: DocPos) -> DocPos {todo!()}
 
-
+    /// get the position of the last character
+    fn end(&self) -> DocPos;
 
 
     fn chars_fwd(&self, pos: DocPos) -> BufIter<Self> where Self: Sized {
@@ -312,6 +313,12 @@ impl Buffer for PTBuffer {
     fn linecnt(&self) -> usize {
         self.table.iter().map(|te| te.len).sum()
     }
+
+    fn end(&self) -> DocPos {
+        let y = self.linecnt() - 1;
+        let x = self.get_line(DocPos { x: 0, y }).0.len();
+        DocPos { x, y }
+    }
 }
 
 impl PTBuffer {
@@ -414,6 +421,25 @@ mod test {
             let out_str = String::from_utf8(out).expect("buffer outputs valid utf-8");
 
             assert_eq!(buf_str, out_str, "inserted string == string insert from buffer");
+        }
+
+        fn buffer_with_changes<B: Buffer> () -> B {
+            let mut b = B::from_string(include_str!("../assets/test/passage_wrapped.txt").to_string());
+            let mut ctx = BufCtx { buf_id: BufId::new(), cursorpos: DocPos { x: 8, y: 12 }, topline: 0 };
+            assert_trait_add_str(&mut b, &mut ctx, "This is some new text");
+            assert_trait_add_str(&mut b, &mut ctx, "This is some more new text");
+            ctx.cursorpos = DocPos {x: 3, y: 9};
+            assert_trait_add_str(&mut b, &mut ctx, "This is some \nnewline text");
+            assert_trait_add_str(&mut b, &mut ctx, "This is some more newline text\n\n");
+            ctx.cursorpos = DocPos {x: 0, y: 0};
+            assert_trait_add_str(&mut b, &mut ctx, "Some text at the beginning");
+            ctx.cursorpos = DocPos {x: 0, y: 0};
+            assert_trait_add_str(&mut b, &mut ctx, "\nope - newl at the beginning");
+            ctx.cursorpos = DocPos {x: 18, y: 1};
+            assert_trait_add_str(&mut b, &mut ctx, "Middle of another edit");
+            assert_trait_add_str(&mut b, &mut ctx, "and again at the end of the middle");
+
+            b
         }
 
         #[test]
@@ -661,6 +687,30 @@ mod test {
             assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
             assert_eq!(it.next(), None);
             assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_end_blank() { test_trait_end_blank::<PTBuffer>() }
+        fn test_trait_end_blank<B: Buffer>() {
+            let buf = B::from_string("".to_string());
+
+            assert_eq!(buf.end(), DocPos { x: 0, y: 0});
+        }
+
+        #[test]
+        fn test_ptbuf_end_simple() { test_trait_end_simple::<PTBuffer>() }
+        fn test_trait_end_simple<B: Buffer>() {
+            let buf = B::from_string("0123456789".to_string());
+
+            assert_eq!(buf.end(), DocPos { x: 10, y: 0});
+        }
+
+        #[test]
+        fn test_ptbuf_end_complex() { test_trait_end_complex::<PTBuffer>() }
+        fn test_trait_end_complex<B: Buffer>() {
+            let buf: B = buffer_with_changes();
+
+            assert_eq!(buf.end(), DocPos { x: 10, y: 97});
         }
     }
 }

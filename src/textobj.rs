@@ -75,6 +75,9 @@ where
 /// Come to think of it, I could put a function pointer of the signature of find_dest, but that
 /// doesn't solve the problem of decoupling Motions from Buffer implementations
 ///
+/// I could also make the caller of the text motions a impl on Buffer, and that can take a motion
+/// trait object
+///
 /// This was a long winded way of saying that I use an enum here because it is convienient to keep
 /// everything `Sized`.
 pub enum TextMotion {
@@ -117,7 +120,10 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        buf.chars_fwd(pos).skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next()
+        let mut it = buf.chars_fwd(pos).peekable();
+        it.next();
+        it.peek()?;
+        it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next().or_else(|| Some(buf.end()))
     }
 }
 
@@ -127,9 +133,10 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_fwd(pos);
+        let mut it = buf.chars_fwd(pos).peekable();
         let init = it.next()?.1.category();
-        it.skip_while(|c| c.1.category() == init).skip_while(|c| c.1.category() == WordCat::Whitespace).map(|(p, _)| p).next()
+        it.peek()?;
+        it.skip_while(|c| c.1.category() == init).skip_while(|c| c.1.category() == WordCat::Whitespace).map(|(p, _)| p).next().or_else(|| Some(buf.end()))
     }
 }
 
@@ -141,7 +148,7 @@ where
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
         let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
         let mut ret = *it.peek()?;
-        while it.peek()?.1.category() != WordCat::Whitespace {
+        while {let Some(x) = it.peek() else {return Some(buf.end())}; x}.1.category() != WordCat::Whitespace {
             ret = *it.peek()?;
             it.next();
         };
@@ -158,7 +165,7 @@ where
         let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
         let mut ret = *it.peek()?;
         let init = ret.1.category();
-        while it.peek()?.1.category() == init {
+        while {let Some(x) = it.peek() else {return Some(buf.end())}; x}.1.category() == init {
             ret = *it.peek()?;
             it.next();
         };
@@ -174,7 +181,7 @@ where
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
         let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
         let mut ret = *it.peek()?;
-        while it.peek()?.1.category() != WordCat::Whitespace {
+        while {let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })}; x}.1.category() != WordCat::Whitespace {
             ret = *it.peek()?;
             it.next();
         };
@@ -191,7 +198,7 @@ where
         let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
         let mut ret = *it.peek()?;
         let init = ret.1.category();
-        while it.peek()?.1.category() == init {
+        while {let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })}; x}.1.category() == init {
             ret = *it.peek()?;
             it.next();
         };
@@ -204,8 +211,9 @@ impl<B> TextMot<B> for WordEndBackward
 where
     B: Buffer,
 {
-    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        buf.chars_bck(pos).skip_while(|c| c.1.is_wordchar_extended()).skip_while(|c| !c.1.is_wordchar_extended()).map(|(p, _)| p).next()
+    fn find_dest(&self, _buf: &B, _pos: DocPos) -> Option<DocPos> {
+        // buf.chars_bck(pos).skip_while(|c| c.1.is_wordchar_extended()).skip_while(|c| !c.1.is_wordchar_extended()).map(|(p, _)| p).next()
+        todo!()
     }
 }
 
@@ -214,12 +222,13 @@ impl<B> TextMot<B> for WordEndSubsetBackward
 where
     B: Buffer,
 {
-    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos).skip_while(|c| !c.1.is_wordchar_extended());
-        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
-            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).map(|(p, _)| p).next(),
-            false => it.skip_while(|c| c.1.is_wordchar()).map(|(p, _)| p).next(),
-        }
+    fn find_dest(&self, _buf: &B, _pos: DocPos) -> Option<DocPos> {
+        // let mut it = buf.chars_bck(pos).skip_while(|c| !c.1.is_wordchar_extended());
+        // match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
+        //     true => it.skip_while(|c| c.1.is_only_wordchar_extended()).map(|(p, _)| p).next(),
+        //     false => it.skip_while(|c| c.1.is_wordchar()).map(|(p, _)| p).next(),
+        // }
+        todo!();
     }
 }
 
@@ -291,5 +300,98 @@ where
 {
     fn find_bounds(&self, _buf: &B, _pos: DocPos) -> Option<DocRange> {
         todo!()
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use crate::buffer::PTBuffer;
+
+    use super::*;
+
+    // TODO: write some macros for these tests
+
+    fn do_motion_start<B: Buffer>(buf: &B, motion: &dyn TextMot<B>) -> Option<DocPos> {
+        motion.find_dest(buf, DocPos { x: 0, y: 0 })
+    }
+
+    fn apply_motion<B: Buffer>(buf: &B, motion: &dyn TextMot<B>, pos: &mut Option<DocPos>) {
+        *pos = motion.find_dest(buf, pos.unwrap());
+    }
+
+    #[test]
+    fn word_fwd_basic() {
+        let buf = PTBuffer::from_string("abcd efg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 5, y: 0}));
+    }
+
+    #[test]
+    fn word_fwd_short() {
+        let buf = PTBuffer::from_string("a bcd efg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 2, y: 0}));
+    }
+
+    #[test]
+    fn word_fwd_newl() {
+        let buf = PTBuffer::from_string("abcd\nefg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 0, y: 1}));
+    }
+
+    #[test]
+    fn word_fwd_newl_then_space() {
+        let buf = PTBuffer::from_string("abcd\n    efg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 4, y: 1}));
+    }
+
+    #[test]
+    fn word_fwd_end() {
+        let buf = PTBuffer::from_string("abcdefg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 7, y: 0}));
+    }
+
+    #[test]
+    fn word_fwd_end_at_end() {
+        let buf = PTBuffer::from_string("abcdefg".to_string());
+        let mut pos = do_motion_start(&buf, &WordForward);
+        assert_eq!(pos, Some(DocPos{x: 7, y: 0}));
+        apply_motion(&buf, &WordForward, &mut pos);
+        assert_eq!(pos, None);
+    }
+
+    #[test]
+    fn word_bck_basic() {
+        let buf = PTBuffer::from_string("abcd efg".to_string());
+        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 5, y: 0}));
+    }
+
+    #[test]
+    fn word_bck_short() {
+        let buf = PTBuffer::from_string("abcd ef g".to_string());
+        assert_eq!(WordBackward.find_dest(&buf, DocPos { x: 8, y: 0 }), Some(DocPos{ x: 5, y: 0}));
+    }
+
+    #[test]
+    fn word_bck_newl() {
+        let buf = PTBuffer::from_string("abcd\nefg\na".to_string());
+        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 0, y: 2}));
+    }
+
+    #[test]
+    fn word_bck_space_then_newl() {
+        let buf = PTBuffer::from_string("abcd\n    efg\n    ".to_string());
+        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 4, y: 1}));
+    }
+
+    #[test]
+    fn word_bck_end() {
+        let buf = PTBuffer::from_string("abcdefg".to_string());
+        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 0, y: 0}));
+    }
+
+    #[test]
+    fn word_bck_end_at_end() {
+        let buf = PTBuffer::from_string("abcdefg".to_string());
+        assert_eq!(do_motion_start(&buf, &WordBackward), None);
     }
 }
