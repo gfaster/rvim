@@ -12,7 +12,7 @@ pub struct DocPos {
 
 impl PartialOrd for DocPos {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        let Some(y) = self.y.partial_cmp(&other.y) else { return None };
+        let y = self.y.partial_cmp(&other.y)?;
         match y {
             std::cmp::Ordering::Equal => {
                 self.x.partial_cmp(&other.x)

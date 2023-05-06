@@ -133,7 +133,6 @@ where
                 buf.insert_string(buf_ctx, c.replace('\r', "\n").as_str());
                 self.window.draw(self);
             }
-            crate::input::Operation::ToInsert => self.mode = Mode::Insert,
             crate::input::Operation::Delete => {
                 let buf_ctx = &mut self.window.buf_ctx;
                 self.buffers
@@ -142,7 +141,7 @@ where
                     .delete_char(buf_ctx);
                 self.window.draw(self);
             }
-            crate::input::Operation::ToNormal => self.mode = Mode::Normal,
+            crate::input::Operation::SwitchMode(m) => self.mode = m,
             crate::input::Operation::None => (),
             crate::input::Operation::Replace(_) => todo!(),
             crate::input::Operation::Debug => {

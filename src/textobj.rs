@@ -13,12 +13,29 @@ pub enum Motion {
     TextMotion(TextMotion)
 }
 
+#[derive(PartialEq, Eq)]
+enum WordCat {
+    Word,
+    WordExt,
+    Whitespace
+}
+
 trait Word {
     fn is_wordchar(&self) -> bool;
     fn is_wordchar_extended(&self) -> bool;
 
     fn is_only_wordchar_extended(&self) -> bool {
         !self.is_wordchar() && self.is_wordchar_extended()
+    }
+
+    fn category(&self) -> WordCat {
+        if self.is_wordchar() {
+            WordCat::Word
+        } else if self.is_wordchar_extended() {
+            WordCat::WordExt
+        } else {
+            WordCat::Whitespace
+        }
     }
 }
 
@@ -55,6 +72,9 @@ where
 /// want one long line to be super slow). It may be that buffers will all have to be trait objects
 /// in the end, but I'm not crazy about that.
 ///
+/// Come to think of it, I could put a function pointer of the signature of find_dest, but that
+/// doesn't solve the problem of decoupling Motions from Buffer implementations
+///
 /// This was a long winded way of saying that I use an enum here because it is convienient to keep
 /// everything `Sized`.
 pub enum TextMotion {
@@ -82,9 +102,9 @@ impl<B: Buffer> TextMot<B> for TextMotion {
             TextMotion::WordSubsetForward => WordSubsetForward.find_dest(buf, pos),
             TextMotion::WordBackward => WordBackward.find_dest(buf, pos),
             TextMotion::WordSubsetBackward => WordSubsetBackward.find_dest(buf, pos),
-            TextMotion::WordEndForward => WordForward.find_dest(buf, pos),
-            TextMotion::WordEndSubsetForward => WordSubsetForward.find_dest(buf, pos),
-            TextMotion::WordEndBackward => WordBackward.find_dest(buf, pos),
+            TextMotion::WordEndForward => WordEndForward.find_dest(buf, pos),
+            TextMotion::WordEndSubsetForward => WordEndSubsetForward.find_dest(buf, pos),
+            TextMotion::WordEndBackward => WordEndBackward.find_dest(buf, pos),
             TextMotion::WordEndSubsetBackward => WordSubsetBackward.find_dest(buf, pos),
         }
     }
@@ -108,10 +128,8 @@ where
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
         let mut it = buf.chars_fwd(pos);
-        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
-            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
-            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
-        }
+        let init = it.next()?.1.category();
+        it.skip_while(|c| c.1.category() == init).skip_while(|c| c.1.category() == WordCat::Whitespace).map(|(p, _)| p).next()
     }
 }
 
@@ -121,16 +139,13 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos).skip(1).peekable();
-        while let Some((_, c)) = it.next() {
-            if c.is_wordchar_extended() { break }
-        }
-        while let Some((p, _)) = it.next() {
-            if let Some((_, c)) = it.peek() {
-                if !c.is_wordchar_extended() { return Some(p) }
-            }
-        }
-        None
+        let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut ret = *it.peek()?;
+        while it.peek()?.1.category() != WordCat::Whitespace {
+            ret = *it.peek()?;
+            it.next();
+        };
+        Some(ret.0)
     }
 }
 
@@ -140,11 +155,14 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos).skip(1);
-        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
-            true => it.skip_while(|c| !c.1.is_only_wordchar_extended()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
-            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
-        }
+        let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut ret = *it.peek()?;
+        let init = ret.1.category();
+        while it.peek()?.1.category() == init {
+            ret = *it.peek()?;
+            it.next();
+        };
+        Some(ret.0)
     }
 }
 
@@ -154,7 +172,13 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        buf.chars_bck(pos).skip_while(|c| !c.1.is_wordchar_extended()).skip_while(|c| c.1.is_wordchar_extended()).map(|(p, _)| p).next()
+        let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut ret = *it.peek()?;
+        while it.peek()?.1.category() != WordCat::Whitespace {
+            ret = *it.peek()?;
+            it.next();
+        };
+        Some(ret.0)
     }
 }
 
@@ -164,14 +188,14 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos);
-        if let Some(_) = it.next() {} else {
-            return Some(pos)
+        let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut ret = *it.peek()?;
+        let init = ret.1.category();
+        while it.peek()?.1.category() == init {
+            ret = *it.peek()?;
+            it.next();
         };
-        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
-            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).map(|(p, _)| p).next(),
-            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
-        }
+        Some(ret.0)
     }
 }
 

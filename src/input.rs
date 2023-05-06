@@ -14,7 +14,6 @@ pub enum Operation {
     Change,
     Replace(String),
     Insert(String),
-    ToInsert,
     Delete,
     SwitchMode(Mode),
     Debug,
@@ -154,12 +153,12 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
         })),
         'a' => Some(Accepting::Complete(Action {
             motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
-            operation: Operation::ToInsert,
+            operation: Operation::SwitchMode(Mode::Insert),
             repeat: None,
         })),
         'i' => Some(Accepting::Complete(Action {
             motion: None,
-            operation: Operation::ToInsert,
+            operation: Operation::SwitchMode(Mode::Insert),
             repeat: None,
         })),
         'x' => Some(Accepting::Complete(Action {
