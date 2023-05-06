@@ -79,9 +79,14 @@ fn handle_motion(c: char) -> Option<Motion> {
         'k' => Some(Motion::ScreenSpace { dy: -1, dx: 0 }),
         'l' => Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
         '0' => Some(Motion::TextMotion(TextMotion::StartOfLine)),
-        'w' => Some(Motion::TextMotion(TextMotion::WordForward)),
+        'b' => Some(Motion::TextMotion(TextMotion::WordSubsetBackward)),
+        'B' => Some(Motion::TextMotion(TextMotion::WordBackward)),
+        'w' => Some(Motion::TextMotion(TextMotion::WordSubsetForward)),
+        'W' => Some(Motion::TextMotion(TextMotion::WordForward)),
+        'e' => Some(Motion::TextMotion(TextMotion::WordEndSubsetForward)),
+        'E' => Some(Motion::TextMotion(TextMotion::WordEndForward)),
         '$' => Some(Motion::TextMotion(TextMotion::EndOfLine)),
-        _ => None,
+        _ => panic!("handle_motion should only be called with motion"),
     }
 }
 
@@ -104,7 +109,7 @@ fn handle_textobj(a: Accepting, c: char) -> Option<Accepting> {
 fn handle_motion_or_textobj(a: Accepting, c: char) -> Option<Accepting> {
     match (a, c) {
         (Accepting::MotionOrTextObj { op }, _) => match c {
-            'h' | 'j' | 'k' | 'l' => Some(Accepting::Complete(Action {
+            'h' | 'j' | 'k' | 'l' | '0' | 'w' | 'W' | '$' | 'b' | 'B' | 'e' | 'E' => Some(Accepting::Complete(Action {
                 motion: handle_motion(c),
                 operation: op,
                 repeat: None,
@@ -142,7 +147,7 @@ where
 
 fn handle_normal_input(c: char) -> Option<Accepting> {
     match c {
-        'h' | 'j' | 'k' | 'l' | 'w' | '0' | '$' => Some(Accepting::Complete(Action {
+        'h' | 'j' | 'k' | 'l' | 'w' | 'W' | '0' | '$' | 'b' | 'B' | 'e' | 'E' => Some(Accepting::Complete(Action {
             motion: handle_motion(c),
             operation: Operation::None,
             repeat: None,

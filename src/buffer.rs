@@ -81,7 +81,11 @@ pub trait Buffer {
 
 
     fn chars_fwd(&self, pos: DocPos) -> BufIter<Self> where Self: Sized {
-        BufIter { buf: self, line: None, pos, dir: BufIterDir::Forward }
+        BufIter { buf: self, line: None, pos, dir: BufIterDir::Forward, next_none: false}
+    }
+
+    fn chars_bck(&self, pos: DocPos) -> BufIter<Self> where Self: Sized {
+        BufIter { buf: self, line: None, pos, dir: BufIterDir::Backward, next_none: false}
     }
 }
 
@@ -91,31 +95,35 @@ enum BufIterDir {
     Backward,
 }
 
-/// Iterator over the characters in a buffer
+/// Iterator over the characters in a buffer - I should maybe make this into one for forward and
+/// one for backward
 pub struct BufIter<'a, B: Buffer> {
     buf: &'a B,
     line: Option<&'a str>,
     pos: DocPos,
     dir: BufIterDir,
+    next_none: bool
 }
 
 impl<B: Buffer> Iterator for BufIter<'_, B> {
     type Item = (DocPos, char);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let virt = self.pos;
-        if virt.y >= self.buf.linecnt() {
+        if self.pos.y >= self.buf.linecnt() || self.next_none {
             return None;
         }
 
         let line = self.line.unwrap_or_else(|| {
             let l = self.buf.get_lines(self.pos.y..(self.pos.y + 1))[0];
+            self.pos = DocPos { x: self.pos.x.min(l.len()), y: self.pos.y };
             self.line = Some(l);
             l
         });
+
+        let virt = self.pos;
+
         match self.dir {
             BufIterDir::Forward => {
-
                 if virt.x + 1 > line.len() {
                     self.pos.x = 0;
                     self.pos.y += 1;
@@ -123,11 +131,24 @@ impl<B: Buffer> Iterator for BufIter<'_, B> {
                 } else {
                     self.pos.x += 1;
                 }
-
                 let c = line.chars().chain(['\n']).skip(virt.x).next().expect("iterate to real char (does this line have non-ascii?)");
                 Some((virt, c))
             },
-            BufIterDir::Backward => todo!(),
+            BufIterDir::Backward => {
+                if virt.x == 0 {
+                    self.pos.x = usize::MAX;
+                    if self.pos.y == 0 {
+                        self.next_none = true;
+                    } else {
+                        self.pos.y -= 1;
+                    }
+                    self.line = None;
+                } else {
+                    self.pos.x -= 1;
+                }
+                let c = line.chars().chain(['\n']).skip(virt.x).next().expect("iterate to real char (does this line have non-ascii?)");
+                Some((virt, c))
+            },
         }
     }
 }
@@ -480,6 +501,7 @@ mod test {
             assert_eq!(it.next(), Some((DocPos { x: 9, y: 0}, '9')));
             assert_eq!(it.next(), Some((DocPos { x: 10, y: 0}, '\n')));
             assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
         }
 
         #[test]
@@ -501,6 +523,7 @@ mod test {
             assert_eq!(it.next(), Some((DocPos { x: 4, y: 1}, '9')));
             assert_eq!(it.next(), Some((DocPos { x: 5, y: 1}, '\n')));
             assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
         }
 
         #[test]
@@ -510,6 +533,7 @@ mod test {
             let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
             assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '\n')));
+            assert_eq!(it.next(), None);
             assert_eq!(it.next(), None);
         }
 
@@ -523,6 +547,101 @@ mod test {
             assert_eq!(it.next(), Some((DocPos { x: 0, y: 1}, '3')));
             assert_eq!(it.next(), Some((DocPos { x: 1, y: 1}, '4')));
             assert_eq!(it.next(), Some((DocPos { x: 2, y: 1}, '\n')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_empty() { test_trait_charsbck_empty::<PTBuffer>() }
+        fn test_trait_charsbck_empty<B: Buffer>() {
+            let buf = B::from_string("".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '\n')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_eol() { test_trait_charsbck_eol::<PTBuffer>() }
+        fn test_trait_charsbck_eol<B: Buffer>() {
+            let buf = B::from_string("01\n34".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 2, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_crosslf() { test_trait_charsbck_crosslf::<PTBuffer>() }
+        fn test_trait_charsbck_crosslf<B: Buffer>() {
+            let buf = B::from_string("01234\n56789".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 5, y: 1 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 1}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 1}, '9')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 1}, '8')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 1}, '7')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 1}, '6')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 1}, '5')));
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 0}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 0}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 0}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '2')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_end() { test_trait_charsbck_end::<PTBuffer>() }
+        fn test_trait_charsbck_end<B: Buffer>() {
+            let buf = B::from_string("0123456789".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 10, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 10, y: 0}, '\n')));
+            assert_eq!(it.next(), Some((DocPos { x: 9, y: 0}, '9')));
+            assert_eq!(it.next(), Some((DocPos { x: 8, y: 0}, '8')));
+            assert_eq!(it.next(), Some((DocPos { x: 7, y: 0}, '7')));
+            assert_eq!(it.next(), Some((DocPos { x: 6, y: 0}, '6')));
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 0}, '5')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 0}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 0}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '2')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_mid() { test_trait_charsbck_mid::<PTBuffer>() }
+        fn test_trait_charsbck_mid<B: Buffer>() {
+            let buf = B::from_string("0123456789".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 5, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 5, y: 0}, '5')));
+            assert_eq!(it.next(), Some((DocPos { x: 4, y: 0}, '4')));
+            assert_eq!(it.next(), Some((DocPos { x: 3, y: 0}, '3')));
+            assert_eq!(it.next(), Some((DocPos { x: 2, y: 0}, '2')));
+            assert_eq!(it.next(), Some((DocPos { x: 1, y: 0}, '1')));
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next(), None);
+        }
+
+        #[test]
+        fn test_ptbuf_charsbck_start() { test_trait_charsbck_start::<PTBuffer>() }
+        fn test_trait_charsbck_start<B: Buffer>() {
+            let buf = B::from_string("0123456789".to_string());
+            let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
+
+            assert_eq!(it.next(), Some((DocPos { x: 0, y: 0}, '0')));
+            assert_eq!(it.next(), None);
             assert_eq!(it.next(), None);
         }
     }

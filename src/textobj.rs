@@ -18,6 +18,26 @@ pub enum Motion {
     TextMotion(TextMotion)
 }
 
+trait Word {
+    fn is_wordchar(&self) -> bool;
+    fn is_wordchar_extended(&self) -> bool;
+
+    fn is_only_wordchar_extended(&self) -> bool {
+        !self.is_wordchar() && self.is_wordchar_extended()
+    }
+}
+
+impl Word for char {
+    fn is_wordchar(&self) -> bool {
+        self.is_alphanumeric() || self == &'_'
+    }
+
+    fn is_wordchar_extended(&self) -> bool {
+        !self.is_whitespace()
+    }
+
+}
+
 
 #[enum_dispatch]
 pub trait TextMot<B>
@@ -28,17 +48,31 @@ where
 }
 
 pub enum TextMotion {
-    WordForward,
     StartOfLine,
-    EndOfLine
+    EndOfLine,
+    WordForward,
+    WordSubsetForward,
+    WordBackward,
+    WordSubsetBackward,
+    WordEndForward,
+    WordEndSubsetForward,
+    WordEndBackward,
+    WordEndSubsetBackward,
 }
 
 impl<B: Buffer> TextMot<B> for TextMotion {
     fn find_dest(&self,buf: &B,pos:DocPos) -> Option<DocPos> {
         match self {
-            TextMotion::WordForward => WordForward.find_dest(buf, pos),
             TextMotion::StartOfLine => StartOfLine.find_dest(buf, pos),
             TextMotion::EndOfLine => EndOfLine.find_dest(buf, pos),
+            TextMotion::WordForward => WordForward.find_dest(buf, pos),
+            TextMotion::WordSubsetForward => WordSubsetForward.find_dest(buf, pos),
+            TextMotion::WordBackward => WordBackward.find_dest(buf, pos),
+            TextMotion::WordSubsetBackward => WordSubsetBackward.find_dest(buf, pos),
+            TextMotion::WordEndForward => WordForward.find_dest(buf, pos),
+            TextMotion::WordEndSubsetForward => WordSubsetForward.find_dest(buf, pos),
+            TextMotion::WordEndBackward => WordBackward.find_dest(buf, pos),
+            TextMotion::WordEndSubsetBackward => WordSubsetBackward.find_dest(buf, pos),
         }
     }
 }
@@ -50,7 +84,105 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        buf.chars_fwd(pos).skip_while(|c| !c.1.is_whitespace()).skip_while(|c| c.1.is_whitespace()).map(|(p, _)| p).next()
+        buf.chars_fwd(pos).skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next()
+    }
+}
+
+pub struct WordSubsetForward;
+impl<B> TextMot<B> for WordSubsetForward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let mut it = buf.chars_fwd(pos);
+        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
+            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
+            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
+        }
+    }
+}
+
+pub struct WordEndForward;
+impl<B> TextMot<B> for WordEndForward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let mut it = buf.chars_bck(pos).skip(1).peekable();
+        while let Some((_, c)) = it.next() {
+            if c.is_wordchar_extended() { break }
+        }
+        while let Some((p, _)) = it.next() {
+            if let Some((_, c)) = it.peek() {
+                if !c.is_wordchar_extended() { return Some(p) }
+            }
+        }
+        None
+    }
+}
+
+pub struct WordEndSubsetForward;
+impl<B> TextMot<B> for WordEndSubsetForward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let mut it = buf.chars_bck(pos).skip(1);
+        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
+            true => it.skip_while(|c| !c.1.is_only_wordchar_extended()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
+            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
+        }
+    }
+}
+
+pub struct WordBackward;
+impl<B> TextMot<B> for WordBackward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        buf.chars_bck(pos).skip_while(|c| !c.1.is_wordchar_extended()).skip_while(|c| c.1.is_wordchar_extended()).map(|(p, _)| p).next()
+    }
+}
+
+pub struct WordSubsetBackward;
+impl<B> TextMot<B> for WordSubsetBackward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let mut it = buf.chars_bck(pos);
+        if let Some(_) = it.next() {} else {
+            return Some(pos)
+        };
+        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
+            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).map(|(p, _)| p).next(),
+            false => it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next(),
+        }
+    }
+}
+
+pub struct WordEndBackward;
+impl<B> TextMot<B> for WordEndBackward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        buf.chars_bck(pos).skip_while(|c| c.1.is_wordchar_extended()).skip_while(|c| !c.1.is_wordchar_extended()).map(|(p, _)| p).next()
+    }
+}
+
+pub struct WordEndSubsetBackward;
+impl<B> TextMot<B> for WordEndSubsetBackward
+where
+    B: Buffer,
+{
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
+        let mut it = buf.chars_bck(pos).skip_while(|c| !c.1.is_wordchar_extended());
+        match it.next().unwrap_or((pos, ' ')).1.is_only_wordchar_extended() {
+            true => it.skip_while(|c| c.1.is_only_wordchar_extended()).map(|(p, _)| p).next(),
+            false => it.skip_while(|c| c.1.is_wordchar()).map(|(p, _)| p).next(),
+        }
     }
 }
 
