@@ -21,8 +21,10 @@ pub enum Mode {
     Insert,
 }
 
-// how I handle the interrupts for now
+// how I handle the interrupts for now - exits on true
 static mut PENDING: AtomicBool = AtomicBool::new(false);
+
+// holds the original termios state to restore to when exiting
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
 
 fn main() {

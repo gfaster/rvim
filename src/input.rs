@@ -16,7 +16,7 @@ pub enum Operation {
     Insert(String),
     ToInsert,
     Delete,
-    ToNormal,
+    SwitchMode(Mode),
     Debug,
     None,
 }
@@ -54,7 +54,7 @@ where
             match c {
                 '\x1b' => Action { // escape key, this needs to be more sophisticated for pasting
                     motion: None,
-                    operation: Operation::ToNormal,
+                    operation: Operation::SwitchMode(Mode::Normal),
                     repeat: None,
                 },
                 '\x7f' | '\x08' => Action { // delete/backspace keys

@@ -1,11 +1,6 @@
 use crate::buffer::{Buffer, DocRange, DocPos};
 use enum_dispatch::enum_dispatch;
 
-enum TextObjectMode {
-    Unrestricted,
-    LineRestricted,
-}
-
 pub enum TextObjectModifier {
     Inner,
     All,
@@ -39,7 +34,6 @@ impl Word for char {
 }
 
 
-#[enum_dispatch]
 pub trait TextMot<B>
 where
     B: Buffer,
@@ -47,6 +41,23 @@ where
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos>;
 }
 
+/// enum of the possible text motions.
+///
+/// I would like to use dynamic dispatch here because it feels like it fits better than enum
+/// dispatch, but that's a little bit difficult. I don't really care about resolution speed for the
+/// find_dest trait function, but I don't really want each call to the character iterator to have
+/// to go through a vtable becuase that's gross. Additionally, the bufiter trait would have to go
+/// through an extra layer of indirection - it already doesn't like trait objects.
+///
+/// I could add a generic to the declaration of all the enums and structs that use `TextMotion`,
+/// but explicitly tying up the structs themselves to a buffer implementation also seems wrong -
+/// input should not care about the buffer implementation. It doesn't matter now, but in the future
+/// I want buffers to open using different implementations based on the formatting (i.e. I don't
+/// want one long line to be super slow). It may be that buffers will all have to be trait objects
+/// in the end, but I'm not crazy about that.
+///
+/// This was a long winded way of saying that I use an enum here because it is convienient to keep
+/// everything `Sized`.
 pub enum TextMotion {
     StartOfLine,
     EndOfLine,
