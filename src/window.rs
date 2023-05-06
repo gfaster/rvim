@@ -44,6 +44,7 @@ impl BufCtx {
         TermPos { x, y }
     }
 
+    /// draw the window - I want to reconsider this generic
     pub fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
         let buf = ctx.getbuf(self.buf_id).unwrap();
         let lines = buf.get_lines(self.topline..(self.topline + win.height() as usize));

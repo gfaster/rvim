@@ -5,6 +5,7 @@ mod render;
 mod term;
 mod textobj;
 mod window;
+mod command;
 use nix::sys::termios::{self, Termios};
 use buffer::PTBuffer;
 use libc::STDIN_FILENO;

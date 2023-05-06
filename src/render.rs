@@ -22,6 +22,12 @@ impl BufId {
     }
 }
 
+impl BufId {
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
 pub struct Ctx<B>
 where
     B: Buffer,
@@ -99,22 +105,35 @@ where
         self.window.draw(self);
     }
 
+    pub fn focused(&self) -> BufId {
+        self.window.buf_ctx.buf_id
+    }
+
+    pub fn focused_buf(&self) -> &B {
+        &self.buffers[&self.focused()]
+    }
+
+    pub fn open_buffer(&mut self, buf: B) {
+        let buf_id = BufId(self.id_counter);
+        self.id_counter += 1;
+        self.buffers.insert(buf_id, buf).expect("Buf insertion does not reuse ids");
+        self.window.buf_ctx.buf_id = buf_id;
+    }
+
     pub fn process_action(&mut self, action: Action) {
         if let Some(m) = action.motion {
             match m {
                 Motion::ScreenSpace { dy, dx } => {
                     // type system here is kinda sneaky, can't use getbuf because all of self is
                     // borrowed
-                    let bufid = self.window.buf_ctx.buf_id;
-                    let buf = &self.buffers[&bufid];
+                    let buf = &self.buffers[&self.focused()];
                     let buf_ctx = &mut self.window.buf_ctx;
                     buf_ctx.move_cursor(buf, dx, dy)
                 }
                 Motion::BufferSpace { doff: _ } => todo!(),
                 Motion::TextObj(_) => todo!(),
                 Motion::TextMotion(m) => {
-                    let bufid = self.window.buf_ctx.buf_id;
-                    let buf = &self.buffers[&bufid];
+                    let buf = &self.buffers[&self.focused()];
                     let buf_ctx = &mut self.window.buf_ctx;
                     if let Some(newpos) = m.find_dest(buf, buf_ctx.cursorpos){
                         buf_ctx.set_pos(buf, newpos);
