@@ -1,14 +1,13 @@
-use crate::textobj::TextMotion;
 use crate::buffer::Buffer;
+use crate::textobj::Motion;
+use crate::textobj::TextMotion;
 use crate::textobj::TextObject;
 use std::io::stdin;
 use std::io::Read;
-use crate::textobj::Motion;
 
 use crate::textobj::TextObjectModifier;
 use crate::Ctx;
 use crate::Mode;
-
 
 pub enum Operation {
     Change,
@@ -51,12 +50,14 @@ where
                 .next()??;
             eprintln!("{:x}", c as u32);
             match c {
-                '\x1b' => Action { // escape key, this needs to be more sophisticated for pasting
+                '\x1b' => Action {
+                    // escape key, this needs to be more sophisticated for pasting
                     motion: None,
                     operation: Operation::SwitchMode(Mode::Normal),
                     repeat: None,
                 },
-                '\x7f' | '\x08' => Action { // delete/backspace keys
+                '\x7f' | '\x08' => Action {
+                    // delete/backspace keys
                     motion: None,
                     operation: Operation::Delete,
                     repeat: None,
@@ -108,11 +109,13 @@ fn handle_textobj(a: Accepting, c: char) -> Option<Accepting> {
 fn handle_motion_or_textobj(a: Accepting, c: char) -> Option<Accepting> {
     match (a, c) {
         (Accepting::MotionOrTextObj { op }, _) => match c {
-            'h' | 'j' | 'k' | 'l' | '0' | 'w' | 'W' | '$' | 'b' | 'B' | 'e' | 'E' => Some(Accepting::Complete(Action {
-                motion: handle_motion(c),
-                operation: op,
-                repeat: None,
-            })),
+            'h' | 'j' | 'k' | 'l' | '0' | 'w' | 'W' | '$' | 'b' | 'B' | 'e' | 'E' => {
+                Some(Accepting::Complete(Action {
+                    motion: handle_motion(c),
+                    operation: op,
+                    repeat: None,
+                }))
+            }
             'i' => Some(Accepting::TextObject {
                 op,
                 md: TextObjectModifier::Inner,
@@ -146,11 +149,13 @@ where
 
 fn handle_normal_input(c: char) -> Option<Accepting> {
     match c {
-        'h' | 'j' | 'k' | 'l' | 'w' | 'W' | '0' | '$' | 'b' | 'B' | 'e' | 'E' => Some(Accepting::Complete(Action {
-            motion: handle_motion(c),
-            operation: Operation::None,
-            repeat: None,
-        })),
+        'h' | 'j' | 'k' | 'l' | 'w' | 'W' | '0' | '$' | 'b' | 'B' | 'e' | 'E' => {
+            Some(Accepting::Complete(Action {
+                motion: handle_motion(c),
+                operation: Operation::None,
+                repeat: None,
+            }))
+        }
         'a' => Some(Accepting::Complete(Action {
             motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
             operation: Operation::SwitchMode(Mode::Insert),
@@ -187,7 +192,7 @@ fn handle_normal_mode() -> Option<Action> {
     loop {
         match wip {
             Accepting::Complete(x) => return Some(x),
-            _ => wip = state_machine_step(wip, &mut stdin)?
+            _ => wip = state_machine_step(wip, &mut stdin)?,
         };
     }
 }

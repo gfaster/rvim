@@ -50,7 +50,10 @@ impl BufCtx {
         let lines = buf.get_lines(self.topline..(self.topline + win.height() as usize));
         let basepos = win.reltoabs(TermPos { x: 0, y: 0 });
         for (i, l) in lines.into_iter().enumerate() {
-            term::goto(TermPos { x: basepos.x, y: basepos.y + i as u32 });
+            term::goto(TermPos {
+                x: basepos.x,
+                y: basepos.y + i as u32,
+            });
             print!("{:w$}", l, w = win.width() as usize);
         }
     }
@@ -80,7 +83,7 @@ impl BufCtx {
         self.cursorpos.y = newy;
     }
 
-    pub fn set_pos<B: Buffer> (&mut self, _buf: &B, pos: DocPos) {
+    pub fn set_pos<B: Buffer>(&mut self, _buf: &B, pos: DocPos) {
         self.cursorpos = pos;
     }
 }
@@ -365,12 +368,12 @@ impl Write for Window {
 
 #[cfg(test)]
 mod test {
-    use crate::buffer::PTBuffer;
+    use crate::buffer::test::polytest;
 
     use super::*;
 
-    fn basic_context() -> Ctx<PTBuffer> {
-        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+    fn basic_context<B: Buffer>() -> Ctx<B> {
+        let b = B::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -388,8 +391,8 @@ mod test {
         ctx
     }
 
-    fn scroll_context() -> Ctx<PTBuffer> {
-        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
+    fn scroll_context<B: Buffer>() -> Ctx<B> {
+        let b = B::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -407,8 +410,8 @@ mod test {
         ctx
     }
 
-    fn blank_context() -> Ctx<PTBuffer> {
-        let b = PTBuffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+    fn blank_context<B: Buffer>() -> Ctx<B> {
+        let b = B::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -426,9 +429,9 @@ mod test {
         ctx
     }
 
-    #[test]
-    fn scroll_moves_topline() {
-        let ctx = scroll_context();
+    polytest!(scroll_moves_topline);
+    fn scroll_moves_topline<B: Buffer>() {
+        let ctx = scroll_context::<B>();
         assert_eq!(ctx.window.buf_ctx.topline, 0);
     }
 }

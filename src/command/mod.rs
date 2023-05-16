@@ -1,8 +1,6 @@
-use std::{fs::OpenOptions, path::PathBuf, error::Error, io::Read};
-use crate::{render::Ctx, buffer::Buffer};
+use crate::{buffer::Buffer, render::Ctx};
+use std::{error::Error, fs::OpenOptions, io::Read, path::PathBuf};
 mod parser;
-
-
 
 /// The command buffer serves two purposes - entering commands and displaying errors/feedback
 ///
@@ -11,7 +9,7 @@ mod parser;
 /// For now, I'm going to make it only one line
 struct CommandBuffer {
     msg: Option<String>,
-    content: Option<String>
+    content: Option<String>,
 }
 
 impl CommandBuffer {
@@ -20,22 +18,21 @@ impl CommandBuffer {
     }
 }
 
-
-
-
-
 trait Command<B: Buffer> {
     fn exec(self, ctx: &mut Ctx<B>) -> Result<(), Box<dyn Error>>;
 }
 
 /// write to file
 struct Write {
-    filename: PathBuf
+    filename: PathBuf,
 }
 
 impl<B: Buffer> Command<B> for Write {
     fn exec(self, ctx: &mut Ctx<B>) -> Result<(), Box<dyn Error>> {
-        let mut f = OpenOptions::new().write(true).create(true).open(self.filename)?;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(self.filename)?;
         ctx.focused_buf().serialize(&mut f)?;
         Ok(())
     }
@@ -43,7 +40,7 @@ impl<B: Buffer> Command<B> for Write {
 
 /// Open a file
 struct Edit {
-    filename: PathBuf
+    filename: PathBuf,
 }
 
 impl<B: Buffer> Command<B> for Edit {

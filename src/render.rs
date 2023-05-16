@@ -116,7 +116,9 @@ where
     pub fn open_buffer(&mut self, buf: B) {
         let buf_id = BufId(self.id_counter);
         self.id_counter += 1;
-        self.buffers.insert(buf_id, buf).expect("Buf insertion does not reuse ids");
+        self.buffers
+            .insert(buf_id, buf)
+            .expect("Buf insertion does not reuse ids");
         self.window.buf_ctx.buf_id = buf_id;
     }
 
@@ -135,10 +137,10 @@ where
                 Motion::TextMotion(m) => {
                     let buf = &self.buffers[&self.focused()];
                     let buf_ctx = &mut self.window.buf_ctx;
-                    if let Some(newpos) = m.find_dest(buf, buf_ctx.cursorpos){
+                    if let Some(newpos) = m.find_dest(buf, buf_ctx.cursorpos) {
                         buf_ctx.set_pos(buf, newpos);
                     }
-                },
+                }
             }
         }
 
@@ -146,9 +148,7 @@ where
             crate::input::Operation::Change => todo!(),
             crate::input::Operation::Insert(c) => {
                 let buf_ctx = &mut self.window.buf_ctx;
-                let buf = self.buffers
-                    .get_mut(&buf_ctx.buf_id)
-                    .unwrap();
+                let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
                 buf.insert_string(buf_ctx, c.replace('\r', "\n").as_str());
                 self.window.draw(self);
             }

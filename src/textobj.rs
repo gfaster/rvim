@@ -1,4 +1,4 @@
-use crate::buffer::{Buffer, DocRange, DocPos};
+use crate::buffer::{Buffer, DocPos, DocRange};
 use enum_dispatch::enum_dispatch;
 
 pub enum TextObjectModifier {
@@ -10,14 +10,14 @@ pub enum Motion {
     ScreenSpace { dy: isize, dx: isize },
     BufferSpace { doff: isize },
     TextObj(TextObject),
-    TextMotion(TextMotion)
+    TextMotion(TextMotion),
 }
 
 #[derive(PartialEq, Eq)]
 enum WordCat {
     Word,
     WordExt,
-    Whitespace
+    Whitespace,
 }
 
 trait Word {
@@ -48,7 +48,6 @@ impl Word for char {
         !self.is_whitespace()
     }
 }
-
 
 pub trait TextMot<B>
 where
@@ -97,7 +96,7 @@ impl<B: Buffer> TextMot<B> for TextMotion {
     // for whatever reason enum_dispatch isn't working here, so I have to do it manually
     //
     // ugh.
-    fn find_dest(&self,buf: &B,pos:DocPos) -> Option<DocPos> {
+    fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
         match self {
             TextMotion::StartOfLine => StartOfLine.find_dest(buf, pos),
             TextMotion::EndOfLine => EndOfLine.find_dest(buf, pos),
@@ -113,7 +112,6 @@ impl<B: Buffer> TextMot<B> for TextMotion {
     }
 }
 
-
 pub struct WordForward;
 impl<B> TextMot<B> for WordForward
 where
@@ -123,7 +121,11 @@ where
         let mut it = buf.chars_fwd(pos).peekable();
         it.next();
         it.peek()?;
-        it.skip_while(|c| c.1.is_wordchar()).skip_while(|c| !c.1.is_wordchar()).map(|(p, _)| p).next().or_else(|| Some(buf.end()))
+        it.skip_while(|c| c.1.is_wordchar())
+            .skip_while(|c| !c.1.is_wordchar())
+            .map(|(p, _)| p)
+            .next()
+            .or_else(|| Some(buf.end()))
     }
 }
 
@@ -136,7 +138,11 @@ where
         let mut it = buf.chars_fwd(pos).peekable();
         let init = it.next()?.1.category();
         it.peek()?;
-        it.skip_while(|c| c.1.category() == init).skip_while(|c| c.1.category() == WordCat::Whitespace).map(|(p, _)| p).next().or_else(|| Some(buf.end()))
+        it.skip_while(|c| c.1.category() == init)
+            .skip_while(|c| c.1.category() == WordCat::Whitespace)
+            .map(|(p, _)| p)
+            .next()
+            .or_else(|| Some(buf.end()))
     }
 }
 
@@ -146,12 +152,23 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut it = buf
+            .chars_fwd(pos)
+            .skip(1)
+            .skip_while(|c| c.1.category() == WordCat::Whitespace)
+            .peekable();
         let mut ret = *it.peek()?;
-        while {let Some(x) = it.peek() else {return Some(buf.end())}; x}.1.category() != WordCat::Whitespace {
+        while {
+            let Some(x) = it.peek() else {return Some(buf.end())};
+            x
+        }
+        .1
+        .category()
+            != WordCat::Whitespace
+        {
             ret = *it.peek()?;
             it.next();
-        };
+        }
         Some(ret.0)
     }
 }
@@ -162,13 +179,24 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_fwd(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut it = buf
+            .chars_fwd(pos)
+            .skip(1)
+            .skip_while(|c| c.1.category() == WordCat::Whitespace)
+            .peekable();
         let mut ret = *it.peek()?;
         let init = ret.1.category();
-        while {let Some(x) = it.peek() else {return Some(buf.end())}; x}.1.category() == init {
+        while {
+            let Some(x) = it.peek() else {return Some(buf.end())};
+            x
+        }
+        .1
+        .category()
+            == init
+        {
             ret = *it.peek()?;
             it.next();
-        };
+        }
         Some(ret.0)
     }
 }
@@ -179,12 +207,23 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut it = buf
+            .chars_bck(pos)
+            .skip(1)
+            .skip_while(|c| c.1.category() == WordCat::Whitespace)
+            .peekable();
         let mut ret = *it.peek()?;
-        while {let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })}; x}.1.category() != WordCat::Whitespace {
+        while {
+            let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
+            x
+        }
+        .1
+        .category()
+            != WordCat::Whitespace
+        {
             ret = *it.peek()?;
             it.next();
-        };
+        }
         Some(ret.0)
     }
 }
@@ -195,13 +234,24 @@ where
     B: Buffer,
 {
     fn find_dest(&self, buf: &B, pos: DocPos) -> Option<DocPos> {
-        let mut it = buf.chars_bck(pos).skip(1).skip_while(|c| c.1.category() == WordCat::Whitespace).peekable();
+        let mut it = buf
+            .chars_bck(pos)
+            .skip(1)
+            .skip_while(|c| c.1.category() == WordCat::Whitespace)
+            .peekable();
         let mut ret = *it.peek()?;
         let init = ret.1.category();
-        while {let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })}; x}.1.category() == init {
+        while {
+            let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
+            x
+        }
+        .1
+        .category()
+            == init
+        {
             ret = *it.peek()?;
             it.next();
-        };
+        }
         Some(ret.0)
     }
 }
@@ -253,7 +303,6 @@ where
     }
 }
 
-
 /*
 */
 
@@ -268,30 +317,29 @@ where
 #[enum_dispatch(TextObj)]
 pub enum TextObject {
     WordObject,
-    MotionObject(TextMotion)
+    MotionObject(TextMotion),
 }
 
-pub struct MotionObject (TextMotion);
+pub struct MotionObject(TextMotion);
 impl<B> TextObj<B> for MotionObject
-where 
-    B: Buffer
+where
+    B: Buffer,
 {
     fn find_bounds(&self, buf: &B, off: DocPos) -> Option<DocRange> {
         let Some(finish) = self.0.find_dest(buf, off) else { return None };
         if finish < off {
-            Some(DocRange { 
+            Some(DocRange {
                 start: finish,
-                end: off
+                end: off,
             })
         } else {
             Some(DocRange {
                 start: off,
-                end: finish 
+                end: finish,
             })
         }
     }
 }
-
 
 pub struct WordObject;
 impl<B> TextObj<B> for WordObject
@@ -303,10 +351,10 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod test {
-    use crate::buffer::PTBuffer;
+
+    use crate::buffer::test::polytest;
 
     use super::*;
 
@@ -320,78 +368,108 @@ mod test {
         *pos = motion.find_dest(buf, pos.unwrap());
     }
 
-    #[test]
-    fn word_fwd_basic() {
-        let buf = PTBuffer::from_string("abcd efg".to_string());
-        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 5, y: 0}));
+    polytest!(word_fwd_basic);
+    fn word_fwd_basic<B: Buffer>() {
+        let buf = B::from_string("abcd efg".to_string());
+        assert_eq!(
+            do_motion_start(&buf, &WordForward),
+            Some(DocPos { x: 5, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_fwd_short() {
-        let buf = PTBuffer::from_string("a bcd efg".to_string());
-        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 2, y: 0}));
+    polytest!(word_fwd_short);
+    fn word_fwd_short<B: Buffer>() {
+        let buf = B::from_string("a bcd efg".to_string());
+        assert_eq!(
+            do_motion_start(&buf, &WordForward),
+            Some(DocPos { x: 2, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_fwd_newl() {
-        let buf = PTBuffer::from_string("abcd\nefg".to_string());
-        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 0, y: 1}));
+    polytest!(word_fwd_newl);
+    fn word_fwd_newl<B: Buffer>() {
+        let buf = B::from_string("abcd\nefg".to_string());
+        assert_eq!(
+            do_motion_start(&buf, &WordForward),
+            Some(DocPos { x: 0, y: 1 })
+        );
     }
 
-    #[test]
-    fn word_fwd_newl_then_space() {
-        let buf = PTBuffer::from_string("abcd\n    efg".to_string());
-        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 4, y: 1}));
+    polytest!(word_fwd_newl_then_space);
+    fn word_fwd_newl_then_space<B: Buffer>() {
+        let buf = B::from_string("abcd\n    efg".to_string());
+        assert_eq!(
+            do_motion_start(&buf, &WordForward),
+            Some(DocPos { x: 4, y: 1 })
+        );
     }
 
-    #[test]
-    fn word_fwd_end() {
-        let buf = PTBuffer::from_string("abcdefg".to_string());
-        assert_eq!(do_motion_start(&buf, &WordForward), Some(DocPos{ x: 7, y: 0}));
+    polytest!(word_fwd_end);
+    fn word_fwd_end<B: Buffer>() {
+        let buf = B::from_string("abcdefg".to_string());
+        assert_eq!(
+            do_motion_start(&buf, &WordForward),
+            Some(DocPos { x: 7, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_fwd_end_at_end() {
-        let buf = PTBuffer::from_string("abcdefg".to_string());
+    polytest!(word_fwd_end_at_end);
+    fn word_fwd_end_at_end<B: Buffer>() {
+        let buf = B::from_string("abcdefg".to_string());
         let mut pos = do_motion_start(&buf, &WordForward);
-        assert_eq!(pos, Some(DocPos{x: 7, y: 0}));
+        assert_eq!(pos, Some(DocPos { x: 7, y: 0 }));
         apply_motion(&buf, &WordForward, &mut pos);
         assert_eq!(pos, None);
     }
 
-    #[test]
-    fn word_bck_basic() {
-        let buf = PTBuffer::from_string("abcd efg".to_string());
-        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 5, y: 0}));
+    polytest!(word_bck_basic);
+    fn word_bck_basic<B: Buffer>() {
+        let buf = B::from_string("abcd efg".to_string());
+        assert_eq!(
+            WordBackward.find_dest(&buf, buf.end()),
+            Some(DocPos { x: 5, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_bck_short() {
-        let buf = PTBuffer::from_string("abcd ef g".to_string());
-        assert_eq!(WordBackward.find_dest(&buf, DocPos { x: 8, y: 0 }), Some(DocPos{ x: 5, y: 0}));
+    polytest!(word_bck_short);
+    fn word_bck_short<B: Buffer>() {
+        let buf = B::from_string("abcd ef g".to_string());
+        assert_eq!(
+            WordBackward.find_dest(&buf, DocPos { x: 8, y: 0 }),
+            Some(DocPos { x: 5, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_bck_newl() {
-        let buf = PTBuffer::from_string("abcd\nefg\na".to_string());
-        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 0, y: 2}));
+    polytest!(word_bck_newl);
+    fn word_bck_newl<B: Buffer>() {
+        let buf = B::from_string("abcd\nefg\na".to_string());
+        assert_eq!(
+            WordBackward.find_dest(&buf, buf.end()),
+            Some(DocPos { x: 0, y: 2 })
+        );
     }
 
-    #[test]
-    fn word_bck_space_then_newl() {
-        let buf = PTBuffer::from_string("abcd\n    efg\n    ".to_string());
-        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 4, y: 1}));
+    polytest!(word_bck_space_then_newl);
+    fn word_bck_space_then_newl<B: Buffer>() {
+        let buf = B::from_string("abcd\n    efg\n    ".to_string());
+        assert_eq!(
+            WordBackward.find_dest(&buf, buf.end()),
+            Some(DocPos { x: 4, y: 1 })
+        );
     }
 
-    #[test]
-    fn word_bck_end() {
-        let buf = PTBuffer::from_string("abcdefg".to_string());
-        assert_eq!(WordBackward.find_dest(&buf, buf.end()), Some(DocPos{ x: 0, y: 0}));
+    polytest!(word_bck_end);
+    fn word_bck_end<B: Buffer>() {
+        let buf = B::from_string("abcdefg".to_string());
+        assert_eq!(
+            WordBackward.find_dest(&buf, buf.end()),
+            Some(DocPos { x: 0, y: 0 })
+        );
     }
 
-    #[test]
-    fn word_bck_end_at_end() {
-        let buf = PTBuffer::from_string("abcdefg".to_string());
+    polytest!(word_bck_end_at_end);
+    fn word_bck_end_at_end<B: Buffer>() {
+        let buf = B::from_string("abcdefg".to_string());
         assert_eq!(do_motion_start(&buf, &WordBackward), None);
     }
 }

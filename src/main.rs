@@ -1,20 +1,24 @@
 #![allow(dead_code)]
 mod buffer;
+mod command;
 mod input;
 mod render;
 mod term;
 mod textobj;
 mod window;
-mod command;
-use nix::sys::termios::{self, Termios};
-use buffer::PTBuffer;
+use buffer::piecetable::PTBuffer;
 use libc::STDIN_FILENO;
+use nix::sys::termios::{self, Termios};
 use nix::sys::{
     signal::{self, SaFlags, SigHandler},
     signalfd::SigSet,
 };
 use render::Ctx;
-use std::{path::Path, sync::atomic::AtomicBool, panic::{PanicInfo, self}};
+use std::{
+    panic::{self, PanicInfo},
+    path::Path,
+    sync::atomic::AtomicBool,
+};
 
 #[derive(Clone, Copy)]
 pub enum Mode {
@@ -29,8 +33,7 @@ static mut PENDING: AtomicBool = AtomicBool::new(false);
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
 
 fn main() {
-
-    // setup interrupt handling 
+    // setup interrupt handling
     let sighandler = SigHandler::Handler(sa_handler);
     let sig = signal::SigAction::new(sighandler, SaFlags::empty(), SigSet::empty());
     unsafe {
@@ -48,8 +51,11 @@ fn main() {
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
-    let mut ctx: Ctx<PTBuffer> =
-        Ctx::from_file(libc::STDIN_FILENO, Path::new("./assets/test/passage_wrapped.txt")).unwrap();
+    let mut ctx: Ctx<PTBuffer> = Ctx::from_file(
+        libc::STDIN_FILENO,
+        Path::new("./assets/test/passage_wrapped.txt"),
+    )
+    .unwrap();
     ctx.render();
 
     loop {
@@ -88,7 +94,7 @@ fn panic_handler(pi: &PanicInfo) {
         term::altbuf_disable();
         term::flush();
         termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termio).unwrap_or(());
-    } 
+    }
 
     eprintln!("DON'T PANIC, it said in large, friendly letters.");
 
