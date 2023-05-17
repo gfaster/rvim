@@ -127,8 +127,8 @@ pub trait Buffer {
         }
     }
 }
-
 pub(crate) mod piecetable;
+pub(crate) mod simplebuffer;
 
 enum BufIterDir {
     Forward,
@@ -218,11 +218,16 @@ pub(crate) mod test {
         ($func:ident) => {
             mod $func {
                 use super::$func;
-                use crate::buffer::piecetable::PTBuffer;
+                use $crate::buffer::piecetable::PTBuffer;
+                use $crate::buffer::simplebuffer::SimpleBuffer;
 
                 #[test]
                 fn pt() {
                     $func::<PTBuffer>();
+                }
+                #[test]
+                fn simple() {
+                    $func::<SimpleBuffer>();
                 }
             }
         };
@@ -285,6 +290,36 @@ pub(crate) mod test {
         assert_trait_add_str(&mut b, &mut ctx, "and again at the end of the middle");
 
         b
+    }
+
+    polytest!(get_lines_blank);
+    fn get_lines_blank<B: Buffer>() {
+        let buf = B::from_string("".to_string());
+        assert_eq!(buf.get_lines(0..1), vec![""]);
+    }
+
+    polytest!(get_lines_single);
+    fn get_lines_single<B: Buffer>() {
+        let buf = B::from_string("asdf".to_string());
+        assert_eq!(buf.get_lines(0..1), vec!["asdf"]);
+    }
+
+    polytest!(get_lines_multiple);
+    fn get_lines_multiple<B: Buffer>() {
+        let buf = B::from_string("asdf\nabcd\nefgh".to_string());
+        assert_eq!(buf.get_lines(0..3), vec!["asdf", "abcd", "efgh"]);
+    }
+
+    polytest!(get_lines_single_middle);
+    fn get_lines_single_middle<B: Buffer>() {
+        let buf = B::from_string("asdf\nabcd\nefgh".to_string());
+        assert_eq!(buf.get_lines(1..2), vec!["abcd"]);
+    }
+
+    polytest!(get_lines_multiple_middle);
+    fn get_lines_multiple_middle<B: Buffer>() {
+        let buf = B::from_string("asdf\nabcd\nefgh\n1234".to_string());
+        assert_eq!(buf.get_lines(1..3), vec!["abcd", "efgh"]);
     }
 
     polytest!(insert_basic);
