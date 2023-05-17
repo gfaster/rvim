@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 mod buffer;
 mod command;
+mod debug;
 mod input;
 mod render;
 mod term;
 mod textobj;
 mod window;
+
 use buffer::piecetable::PTBuffer;
 use libc::STDIN_FILENO;
 use nix::sys::termios::{self, Termios};
@@ -19,6 +21,8 @@ use std::{
     path::Path,
     sync::atomic::AtomicBool,
 };
+
+use crate::debug::log;
 
 #[derive(Clone, Copy)]
 pub enum Mode {
@@ -76,13 +80,12 @@ fn main() {
     term::flush();
 
     // eprintln!("reached end of main loop");
-    unsafe {
-        if let Some(termios) = &ORIGINAL_TERMIOS {
-            termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termios).unwrap_or(());
-        } else {
-            panic!("unable to reset terminal");
-        }
+    if let Some(termios) = unsafe { &ORIGINAL_TERMIOS } {
+        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termios).unwrap_or(());
+    } else {
+        panic!("unable to reset terminal");
     }
+    debug::cleanup();
 }
 
 /// Panic handler. Needed becauase we take over the screen during execution and we should clean up
@@ -97,6 +100,8 @@ fn panic_handler(pi: &PanicInfo) {
     }
 
     eprintln!("DON'T PANIC, it said in large, friendly letters.");
+
+    debug::cleanup();
 
     if let Some(location) = pi.location() {
         eprint!("Panicked at {}: {} ", location.file(), location.line());

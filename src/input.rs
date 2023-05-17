@@ -5,6 +5,7 @@ use crate::textobj::TextObject;
 use std::io::stdin;
 use std::io::Read;
 
+use crate::log;
 use crate::textobj::TextObjectModifier;
 use crate::Ctx;
 use crate::Mode;
@@ -48,7 +49,7 @@ where
                 .bytes()
                 .map(|b| Some(char::from(b.ok()?)))
                 .next()??;
-            eprintln!("{:x}", c as u32);
+            log!("{:x}", c as u32);
             match c {
                 '\x1b' => Action {
                     // escape key, this needs to be more sophisticated for pasting
