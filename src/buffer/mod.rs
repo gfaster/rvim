@@ -1,9 +1,4 @@
-use crate::window::BufCtx;
-use std::{
-    io::Write,
-    ops::{Range, RangeBounds},
-    path::Path,
-};
+use std::ops::RangeBounds;
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
@@ -71,37 +66,13 @@ impl DocPos {
 /// Some brief research tells us three possible solutions: Gap Buffer, Rope, or Piece Table. It
 /// seems like Piece Tables would be the best for now due to its simplicity, but I'll make Buffer
 /// into a trait since it seems worthwhile to implement all of them.
-pub trait Buffer {
-    fn name(&self) -> &str;
-    fn open(file: &Path) -> std::io::Result<Self>
-    where
-        Self: Sized;
+pub type Buffer = piecetable::PTBuffer;
+pub use piecetable::PTBuffer;
 
-    fn from_string(s: String) -> Self;
-    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
-
-    /// get a vec of lines, if `lines` is nonempty, then return must be nonempty
-    fn get_lines(&self, lines: Range<usize>) -> Vec<&str>;
-
-    /// delete the character immediately to the left of the cursor in ctx
-    fn delete_char(&mut self, ctx: &mut BufCtx) -> char;
-
-    /// insert a string at the position of the cursor in ctx.
-    /// The cursor should be moved to the end of the inserted text.
-    fn insert_string(&mut self, ctx: &mut BufCtx, s: &str);
-
-    fn get_off(&self, pos: DocPos) -> usize;
-    fn linecnt(&self) -> usize;
-
-    /// return the nearest valid position that is not past the end of line or file
-    fn clamp(&self, _pos: DocPos) -> DocPos {
-        todo!()
-    }
-
-    /// get the position of the last character
-    fn end(&self) -> DocPos;
-
-    fn chars_fwd(&self, pos: DocPos) -> BufIter<Self>
+/// Default implementations of Buffer. I only ever pick a single implementation at compile time, so
+/// I think this is good.
+impl Buffer {
+    pub fn chars_fwd(&self, pos: DocPos) -> BufIter
     where
         Self: Sized,
     {
@@ -114,7 +85,7 @@ pub trait Buffer {
         }
     }
 
-    fn chars_bck(&self, pos: DocPos) -> BufIter<Self>
+    pub fn chars_bck(&self, pos: DocPos) -> BufIter
     where
         Self: Sized,
     {
@@ -127,6 +98,8 @@ pub trait Buffer {
         }
     }
 }
+
+// I think I might want to refactor this from a generic to a singular type alias
 pub(crate) mod piecetable;
 pub(crate) mod simplebuffer;
 
@@ -137,15 +110,15 @@ enum BufIterDir {
 
 /// Iterator over the characters in a buffer - I should maybe make this into one for forward and
 /// one for backward
-pub struct BufIter<'a, B: Buffer> {
-    buf: &'a B,
+pub struct BufIter<'a> {
+    buf: &'a Buffer,
     line: Option<&'a str>,
     pos: DocPos,
     dir: BufIterDir,
     next_none: bool,
 }
 
-impl<B: Buffer> Iterator for BufIter<'_, B> {
+impl Iterator for BufIter<'_> {
     type Item = (DocPos, char);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -176,9 +149,7 @@ impl<B: Buffer> Iterator for BufIter<'_, B> {
                 }
                 let c = line
                     .chars()
-                    .chain(['\n'])
-                    .skip(virt.x)
-                    .next()
+                    .chain(['\n']).nth(virt.x)
                     .expect("iterate to real char (does this line have non-ascii?)");
                 Some((virt, c))
             }
@@ -196,9 +167,7 @@ impl<B: Buffer> Iterator for BufIter<'_, B> {
                 }
                 let c = line
                     .chars()
-                    .chain(['\n'])
-                    .skip(virt.x)
-                    .next()
+                    .chain(['\n']).nth(virt.x)
                     .expect("iterate to real char (does this line have non-ascii?)");
                 Some((virt, c))
             }
@@ -209,32 +178,22 @@ impl<B: Buffer> Iterator for BufIter<'_, B> {
 #[cfg(test)]
 pub(crate) mod test {
     // declared public to allow export of polytest
+    //
+    // If I ever make the buffer a type alias rather than a trait, then the polytest macro should
+    // only be used here, and made private again
 
     use super::*;
     use crate::render::BufId;
+    use crate::window::BufCtx;
 
     /// make a generic test function run over all buffer implementations
+    #[allow(unused)]
     macro_rules! polytest {
         ($func:ident) => {
-            mod $func {
-                use super::$func;
-                use $crate::buffer::piecetable::PTBuffer;
-                use $crate::buffer::simplebuffer::SimpleBuffer;
-
-                #[test]
-                fn pt() {
-                    $func::<PTBuffer>();
-                }
-                #[test]
-                fn simple() {
-                    $func::<SimpleBuffer>();
-                }
-            }
         };
     }
-    pub(crate) use polytest;
 
-    fn assert_buf_eq<B: Buffer>(b: &B, s: &str) -> String {
+    fn assert_buf_eq(b: &Buffer, s: &str) -> String {
         let mut out = Vec::<u8>::new();
         b.serialize(&mut out)
             .expect("buffer will successfully serialize");
@@ -243,7 +202,7 @@ pub(crate) mod test {
         buf_str
     }
 
-    fn assert_trait_add_str<B: Buffer>(b: &mut B, ctx: &mut BufCtx, s: &str) {
+    fn assert_trait_add_str(b: &mut Buffer, ctx: &mut BufCtx, s: &str) {
         let mut out = Vec::<u8>::new();
         b.serialize(&mut out).expect("buffer will serialize");
         let mut buf_str = String::from_utf8(out.clone()).expect("buffer outputs valid utf-8");
@@ -268,9 +227,9 @@ pub(crate) mod test {
         );
     }
 
-    fn buffer_with_changes<B: Buffer>() -> B {
+    fn buffer_with_changes() -> Buffer {
         let mut b =
-            B::from_string(include_str!("../../assets/test/passage_wrapped.txt").to_string());
+            Buffer::from_string(include_str!("../../assets/test/passage_wrapped.txt").to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 8, y: 12 },
@@ -292,39 +251,39 @@ pub(crate) mod test {
         b
     }
 
-    polytest!(get_lines_blank);
-    fn get_lines_blank<B: Buffer>() {
-        let buf = B::from_string("".to_string());
+    #[test]
+    fn get_lines_blank() {
+        let buf = Buffer::from_string("".to_string());
         assert_eq!(buf.get_lines(0..1), vec![""]);
     }
 
-    polytest!(get_lines_single);
-    fn get_lines_single<B: Buffer>() {
-        let buf = B::from_string("asdf".to_string());
+    #[test]
+    fn get_lines_single() {
+        let buf = Buffer::from_string("asdf".to_string());
         assert_eq!(buf.get_lines(0..1), vec!["asdf"]);
     }
 
-    polytest!(get_lines_multiple);
-    fn get_lines_multiple<B: Buffer>() {
-        let buf = B::from_string("asdf\nabcd\nefgh".to_string());
+    #[test]
+    fn get_lines_multiple() {
+        let buf = Buffer::from_string("asdf\nabcd\nefgh".to_string());
         assert_eq!(buf.get_lines(0..3), vec!["asdf", "abcd", "efgh"]);
     }
 
-    polytest!(get_lines_single_middle);
-    fn get_lines_single_middle<B: Buffer>() {
-        let buf = B::from_string("asdf\nabcd\nefgh".to_string());
+    #[test]
+    fn get_lines_single_middle() {
+        let buf = Buffer::from_string("asdf\nabcd\nefgh".to_string());
         assert_eq!(buf.get_lines(1..2), vec!["abcd"]);
     }
 
-    polytest!(get_lines_multiple_middle);
-    fn get_lines_multiple_middle<B: Buffer>() {
-        let buf = B::from_string("asdf\nabcd\nefgh\n1234".to_string());
+    #[test]
+    fn get_lines_multiple_middle() {
+        let buf = Buffer::from_string("asdf\nabcd\nefgh\n1234".to_string());
         assert_eq!(buf.get_lines(1..3), vec!["abcd", "efgh"]);
     }
 
-    polytest!(insert_basic);
-    fn insert_basic<B: Buffer>() {
-        let mut buf = B::from_string("".to_string());
+    #[test]
+    fn insert_basic() {
+        let mut buf = Buffer::from_string("".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -334,9 +293,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "Hello, World");
     }
 
-    polytest!(insert_blank);
-    fn insert_blank<B: Buffer>() {
-        let mut buf = B::from_string("".to_string());
+    #[test]
+    fn insert_blank() {
+        let mut buf = Buffer::from_string("".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -346,9 +305,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "");
     }
 
-    polytest!(insert_multi);
-    fn insert_multi<B: Buffer>() {
-        let mut buf = B::from_string("".to_string());
+    #[test]
+    fn insert_multi() {
+        let mut buf = Buffer::from_string("".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -359,9 +318,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "World!");
     }
 
-    polytest!(insert_newl);
-    fn insert_newl<B: Buffer>() {
-        let mut buf = B::from_string("".to_string());
+    #[test]
+    fn insert_newl() {
+        let mut buf = Buffer::from_string("".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -371,9 +330,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    polytest!(insert_multinewl);
-    fn insert_multinewl<B: Buffer>() {
-        let mut buf = B::from_string("".to_string());
+    #[test]
+    fn insert_multinewl() {
+        let mut buf = Buffer::from_string("".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -385,9 +344,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    polytest!(insert_offset);
-    fn insert_offset<B: Buffer>() {
-        let mut buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn insert_offset() {
+        let mut buf = Buffer::from_string("0123456789".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
@@ -397,9 +356,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "0000000");
     }
 
-    polytest!(insert_offnewl);
-    fn insert_offnewl<B: Buffer>() {
-        let mut buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn insert_offnewl() {
+        let mut buf = Buffer::from_string("0123456789".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
@@ -409,9 +368,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    polytest!(insert_prenewl);
-    fn insert_prenewl<B: Buffer>() {
-        let mut buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn insert_prenewl() {
+        let mut buf = Buffer::from_string("0123456789".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -421,9 +380,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    polytest!(insert_multilinestr);
-    fn insert_multilinestr<B: Buffer>() {
-        let mut buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn insert_multilinestr() {
+        let mut buf = Buffer::from_string("0123456789".to_string());
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -434,9 +393,9 @@ pub(crate) mod test {
         assert_trait_add_str(&mut buf, &mut ctx, "\n\n\n104a9zlq");
     }
 
-    polytest!(charsfwd_start);
-    fn charsfwd_start<B: Buffer>() {
-        let buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn charsfwd_start() {
+        let buf = Buffer::from_string("0123456789".to_string());
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -454,9 +413,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsfwd_crosslf);
-    fn charsfwd_crosslf<B: Buffer>() {
-        let buf = B::from_string("01234\n56789".to_string());
+    #[test]
+    fn charsfwd_crosslf() {
+        let buf = Buffer::from_string("01234\n56789".to_string());
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -475,9 +434,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsfwd_empty);
-    fn charsfwd_empty<B: Buffer>() {
-        let buf = B::from_string("".to_string());
+    #[test]
+    fn charsfwd_empty() {
+        let buf = Buffer::from_string("".to_string());
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
@@ -485,9 +444,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsfwd_eol);
-    fn charsfwd_eol<B: Buffer>() {
-        let buf = B::from_string("01\n34".to_string());
+    #[test]
+    fn charsfwd_eol() {
+        let buf = Buffer::from_string("01\n34".to_string());
         let mut it = buf.chars_fwd(DocPos { x: 2, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
@@ -498,9 +457,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_empty);
-    fn charsbck_empty<B: Buffer>() {
-        let buf = B::from_string("".to_string());
+    #[test]
+    fn charsbck_empty() {
+        let buf = Buffer::from_string("".to_string());
         let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
@@ -508,9 +467,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_eol);
-    fn charsbck_eol<B: Buffer>() {
-        let buf = B::from_string("01\n34".to_string());
+    #[test]
+    fn charsbck_eol() {
+        let buf = Buffer::from_string("01\n34".to_string());
         let mut it = buf.chars_bck(DocPos { x: 2, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
@@ -520,9 +479,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_crosslf);
-    fn charsbck_crosslf<B: Buffer>() {
-        let buf = B::from_string("01234\n56789".to_string());
+    #[test]
+    fn charsbck_crosslf() {
+        let buf = Buffer::from_string("01234\n56789".to_string());
         let mut it = buf.chars_bck(DocPos { x: 5, y: 1 });
 
         assert_eq!(it.next(), Some((DocPos { x: 5, y: 1 }, '\n')));
@@ -541,9 +500,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_end);
-    fn charsbck_end<B: Buffer>() {
-        let buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn charsbck_end() {
+        let buf = Buffer::from_string("0123456789".to_string());
         let mut it = buf.chars_bck(DocPos { x: 10, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 10, y: 0 }, '\n')));
@@ -561,9 +520,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_mid);
-    fn charsbck_mid<B: Buffer>() {
-        let buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn charsbck_mid() {
+        let buf = Buffer::from_string("0123456789".to_string());
         let mut it = buf.chars_bck(DocPos { x: 5, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '5')));
@@ -576,9 +535,9 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(charsbck_start);
-    fn charsbck_start<B: Buffer>() {
-        let buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn charsbck_start() {
+        let buf = Buffer::from_string("0123456789".to_string());
         let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -586,23 +545,23 @@ pub(crate) mod test {
         assert_eq!(it.next(), None);
     }
 
-    polytest!(end_blank);
-    fn end_blank<B: Buffer>() {
-        let buf = B::from_string("".to_string());
+    #[test]
+    fn end_blank() {
+        let buf = Buffer::from_string("".to_string());
 
         assert_eq!(buf.end(), DocPos { x: 0, y: 0 });
     }
 
-    polytest!(end_simple);
-    fn end_simple<B: Buffer>() {
-        let buf = B::from_string("0123456789".to_string());
+    #[test]
+    fn end_simple() {
+        let buf = Buffer::from_string("0123456789".to_string());
 
         assert_eq!(buf.end(), DocPos { x: 10, y: 0 });
     }
 
-    polytest!(end_complex);
-    fn end_complex<B: Buffer>() {
-        let buf: B = buffer_with_changes();
+    #[test]
+    fn end_complex() {
+        let buf: Buffer = buffer_with_changes();
 
         assert_eq!(buf.end(), DocPos { x: 10, y: 97 });
     }

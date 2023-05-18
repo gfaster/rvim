@@ -8,7 +8,7 @@ mod term;
 mod textobj;
 mod window;
 
-use buffer::piecetable::PTBuffer;
+
 use libc::STDIN_FILENO;
 use nix::sys::termios::{self, Termios};
 use nix::sys::{
@@ -55,7 +55,7 @@ fn main() {
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
-    let mut ctx: Ctx<PTBuffer> = Ctx::from_file(
+    let mut ctx: Ctx = Ctx::from_file(
         libc::STDIN_FILENO,
         Path::new("./assets/test/passage_wrapped.txt"),
     )
@@ -81,7 +81,7 @@ fn main() {
 
     // eprintln!("reached end of main loop");
     if let Some(termios) = unsafe { &ORIGINAL_TERMIOS } {
-        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termios).unwrap_or(());
+        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, termios).unwrap_or(());
     } else {
         panic!("unable to reset terminal");
     }

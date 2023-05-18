@@ -28,12 +28,10 @@ impl BufId {
     }
 }
 
-pub struct Ctx<B>
-where
-    B: Buffer,
+pub struct Ctx
 {
     id_counter: usize,
-    buffers: std::collections::BTreeMap<BufId, B>,
+    buffers: std::collections::BTreeMap<BufId, Buffer>,
     termios: Termios,
     orig: Termios,
     pub term: RawFd,
@@ -42,11 +40,9 @@ where
 }
 
 #[cfg(test)]
-impl<B> Ctx<B>
-where
-    B: Buffer,
+impl Ctx
 {
-    pub fn new_testing(buf: B) -> Self {
+    pub fn new_testing(buf: Buffer) -> Self {
         let term = libc::STDIN_FILENO;
         let termios = termios::tcgetattr(term).unwrap();
         let bufid = BufId(1);
@@ -63,15 +59,13 @@ where
     }
 }
 
-impl<B> Ctx<B>
-where
-    B: Buffer,
+impl Ctx
 {
     pub fn from_file(term: RawFd, file: &Path) -> std::io::Result<Self> {
-        let buf = B::open(file)?;
+        let buf = Buffer::open(file)?;
         Ok(Self::from_buffer(term, buf))
     }
-    pub fn from_buffer(term: RawFd, buf: B) -> Self {
+    pub fn from_buffer(term: RawFd, buf: Buffer) -> Self {
         term::altbuf_enable();
         term::flush();
         let mut termios = termios::tcgetattr(term).unwrap();
@@ -93,11 +87,11 @@ where
         }
     }
 
-    pub fn getbuf_mut(&mut self, buf: BufId) -> Option<&mut B> {
+    pub fn getbuf_mut(&mut self, buf: BufId) -> Option<&mut Buffer> {
         self.buffers.get_mut(&buf)
     }
 
-    pub fn getbuf(&self, buf: BufId) -> Option<&B> {
+    pub fn getbuf(&self, buf: BufId) -> Option<&Buffer> {
         self.buffers.get(&buf)
     }
 
@@ -109,11 +103,11 @@ where
         self.window.buf_ctx.buf_id
     }
 
-    pub fn focused_buf(&self) -> &B {
+    pub fn focused_buf(&self) -> &Buffer {
         &self.buffers[&self.focused()]
     }
 
-    pub fn open_buffer(&mut self, buf: B) {
+    pub fn open_buffer(&mut self, buf: Buffer) {
         let buf_id = BufId(self.id_counter);
         self.id_counter += 1;
         self.buffers
@@ -169,13 +163,13 @@ where
                 let buf = &self.buffers[&id];
                 let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
                 eprintln!("line: {:?}", lines);
-                eprintln!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
+                eprintln!("len: {:?}", lines.first().unwrap_or(&"").len());
             }
         }
     }
 }
 
-impl<B: Buffer> Drop for Ctx<B> {
+impl Drop for Ctx {
     fn drop(&mut self) {
         termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap_or(());
     }

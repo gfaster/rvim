@@ -18,8 +18,8 @@ impl CommandBuffer {
     }
 }
 
-trait Command<B: Buffer> {
-    fn exec(self, ctx: &mut Ctx<B>) -> Result<(), Box<dyn Error>>;
+trait Command {
+    fn exec(self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>>;
 }
 
 /// write to file
@@ -27,8 +27,8 @@ struct Write {
     filename: PathBuf,
 }
 
-impl<B: Buffer> Command<B> for Write {
-    fn exec(self, ctx: &mut Ctx<B>) -> Result<(), Box<dyn Error>> {
+impl Command for Write {
+    fn exec(self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
         let mut f = OpenOptions::new()
             .write(true)
             .create(true)
@@ -43,12 +43,12 @@ struct Edit {
     filename: PathBuf,
 }
 
-impl<B: Buffer> Command<B> for Edit {
-    fn exec(self, ctx: &mut Ctx<B>) -> Result<(), Box<dyn Error>> {
+impl Command for Edit {
+    fn exec(self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
         let mut f = OpenOptions::new().read(true).open(self.filename)?;
         let mut v = vec![];
         f.read_to_end(&mut v)?;
-        ctx.open_buffer(B::from_string(String::from_utf8(v)?));
+        ctx.open_buffer(Buffer::from_string(String::from_utf8(v)?));
         Ok(())
     }
 }

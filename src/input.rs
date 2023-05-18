@@ -1,4 +1,3 @@
-use crate::buffer::Buffer;
 use crate::textobj::Motion;
 use crate::textobj::TextMotion;
 use crate::textobj::TextObject;
@@ -38,9 +37,7 @@ pub struct Action {
     pub repeat: Option<u32>,
 }
 
-pub fn handle_input<B>(ctx: &Ctx<B>) -> Option<Action>
-where
-    B: Buffer,
+pub fn handle_input(ctx: &Ctx) -> Option<Action>
 {
     match ctx.mode {
         Mode::Normal => handle_normal_mode(),

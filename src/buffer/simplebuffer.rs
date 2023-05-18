@@ -1,10 +1,10 @@
-use super::{Buffer, DocPos};
+use super::{DocPos};
 
 pub struct SimpleBuffer {
     data: String,
 }
 
-impl Buffer for SimpleBuffer {
+impl SimpleBuffer {
     fn name(&self) -> &str {
         "new simple buffer"
     }
@@ -18,7 +18,7 @@ impl Buffer for SimpleBuffer {
 
     fn from_string(s: String) -> Self {
         let mut data = s;
-        if data.len() == 0 {
+        if data.is_empty() {
             data = "\n".to_string();
         }
         Self { data }
@@ -62,6 +62,8 @@ impl Buffer for SimpleBuffer {
         }
     }
 }
+
+// impl BufferExt for SimpleBuffer {} 
 
 impl SimpleBuffer {
     fn to_fileoff(&self, pos: DocPos) -> usize {

@@ -1,4 +1,3 @@
-use super::Buffer;
 use crate::buffer::DocPos;
 use crate::window::BufCtx;
 use std::io::Write;
@@ -27,20 +26,20 @@ pub struct PTBuffer {
     table: Vec<PieceEntry>,
 }
 
-impl Buffer for PTBuffer {
-    fn name(&self) -> &str {
+impl PTBuffer {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    fn open(file: &Path) -> Result<Self, std::io::Error> {
+    pub fn open(file: &Path) -> Result<Self, std::io::Error> {
         let data = std::fs::read_to_string(file)?;
         Ok(Self::from_string(data))
     }
 
-    fn from_string(s: String) -> Self {
+    pub fn from_string(s: String) -> Self {
         let name = "new buffer".to_string();
         let mut orig: Vec<_> = s.lines().map(str::to_string).collect();
-        if orig.len() == 0 {
+        if orig.is_empty() {
             orig.push("".to_string());
         }
         let add = Vec::new();
@@ -57,11 +56,11 @@ impl Buffer for PTBuffer {
         }
     }
 
-    fn delete_char(&mut self, _ctx: &mut BufCtx) -> char {
+    pub fn delete_char(&mut self, _ctx: &mut BufCtx) -> char {
         todo!()
     }
 
-    fn insert_string(&mut self, ctx: &mut BufCtx, s: &str) {
+    pub fn insert_string(&mut self, ctx: &mut BufCtx, s: &str) {
         let pos = ctx.cursorpos; // since this is just insertion, we always replace one line
         let (prev, tidx, testartln) = self.get_line(pos);
         let te = self.table[tidx];
@@ -119,11 +118,11 @@ impl Buffer for PTBuffer {
         // eprintln!("Inserted {s:?} at {pos:?}\norig: {:?}\nnew: {:?}\ntable: {:?}\n", &self.orig, &self.add, &self.table);
     }
 
-    fn get_off(&self, _pos: DocPos) -> usize {
+    pub fn get_off(&self, _pos: DocPos) -> usize {
         todo!()
     }
 
-    fn get_lines(&self, lines: Range<usize>) -> Vec<&str> {
+    pub fn get_lines(&self, lines: Range<usize>) -> Vec<&str> {
         let (tidx, start) = self.table_idx(DocPos {
             x: 0,
             y: lines.start,
@@ -136,18 +135,18 @@ impl Buffer for PTBuffer {
             .collect()
     }
 
-    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+    pub fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         for line in self.lines_fwd_internal(0) {
             writeln!(writer, "{}", line)?;
         }
         Ok(())
     }
 
-    fn linecnt(&self) -> usize {
+    pub fn linecnt(&self) -> usize {
         self.table.iter().map(|te| te.len).sum()
     }
 
-    fn end(&self) -> DocPos {
+    pub fn end(&self) -> DocPos {
         let y = self.linecnt() - 1;
         let x = self.get_line(DocPos { x: 0, y }).0.len();
         DocPos { x, y }

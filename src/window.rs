@@ -45,7 +45,7 @@ impl BufCtx {
     }
 
     /// draw the window - I want to reconsider this generic
-    pub fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
+    pub fn draw(&self, win: &Window, ctx: &Ctx) {
         let buf = ctx.getbuf(self.buf_id).unwrap();
         let lines = buf.get_lines(self.topline..(self.topline + win.height() as usize));
         let basepos = win.reltoabs(TermPos { x: 0, y: 0 });
@@ -66,7 +66,7 @@ impl BufCtx {
         }
     }
 
-    pub fn move_cursor<B: Buffer>(&mut self, buf: &B, dx: isize, dy: isize) {
+    pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
         let newy = self
             .cursorpos
             .y
@@ -83,7 +83,7 @@ impl BufCtx {
         self.cursorpos.y = newy;
     }
 
-    pub fn set_pos<B: Buffer>(&mut self, _buf: &B, pos: DocPos) {
+    pub fn set_pos(&mut self, _buf: &Buffer, pos: DocPos) {
         self.cursorpos = pos;
     }
 }
@@ -99,7 +99,7 @@ struct Padding {
 #[enum_dispatch]
 trait DispComponent {
     /// write the component
-    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>);
+    fn draw(&self, win: &Window, ctx: &Ctx);
 
     /// amount of padding needed left, top, bottom, right
     fn padding(&self) -> Padding;
@@ -115,7 +115,7 @@ enum Component {
 
 struct LineNumbers;
 impl DispComponent for LineNumbers {
-    fn draw<B: Buffer>(&self, win: &Window, _ctx: &Ctx<B>) {
+    fn draw(&self, win: &Window, _ctx: &Ctx) {
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
             term::goto(TermPos {
@@ -138,7 +138,7 @@ impl DispComponent for LineNumbers {
 
 struct RelLineNumbers;
 impl DispComponent for RelLineNumbers {
-    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
+    fn draw(&self, win: &Window, ctx: &Ctx) {
         let linecnt = ctx.getbuf(win.buf_ctx.buf_id).unwrap().linecnt();
         let y = win.cursorpos().y;
         for l in 0..win.height() {
@@ -174,7 +174,7 @@ impl DispComponent for RelLineNumbers {
 
 struct Welcome;
 impl DispComponent for Welcome {
-    fn draw<B: Buffer>(&self, win: &Window, _ctx: &Ctx<B>) {
+    fn draw(&self, win: &Window, _ctx: &Ctx) {
         if !win.dirty {
             let s = include_str!("../assets/welcome.txt");
             let top = (win.height() - s.lines().count() as u32) / 2;
@@ -212,7 +212,7 @@ impl DispComponent for StatusLine {
         }
     }
 
-    fn draw<B: Buffer>(&self, win: &Window, ctx: &Ctx<B>) {
+    fn draw(&self, win: &Window, ctx: &Ctx) {
         let base = win.reltoabs(TermPos {
             x: 0,
             y: win.height() - 1,
@@ -317,7 +317,7 @@ impl Window {
         }
     }
 
-    pub fn draw<B: Buffer>(&self, ctx: &Ctx<B>) {
+    pub fn draw(&self, ctx: &Ctx) {
         term::rst_cur();
         self.buf_ctx.draw(self, ctx);
         self.components.iter().map(|x| x.draw(self, ctx)).last();
@@ -368,12 +368,10 @@ impl Write for Window {
 
 #[cfg(test)]
 mod test {
-    use crate::buffer::test::polytest;
-
     use super::*;
 
-    fn basic_context<B: Buffer>() -> Ctx<B> {
-        let b = B::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+    fn basic_context() -> Ctx {
+        let b = Buffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -391,8 +389,8 @@ mod test {
         ctx
     }
 
-    fn scroll_context<B: Buffer>() -> Ctx<B> {
-        let b = B::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
+    fn scroll_context() -> Ctx {
+        let b = Buffer::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -410,8 +408,8 @@ mod test {
         ctx
     }
 
-    fn blank_context<B: Buffer>() -> Ctx<B> {
-        let b = B::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+    fn blank_context() -> Ctx {
+        let b = Buffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -429,9 +427,8 @@ mod test {
         ctx
     }
 
-    polytest!(scroll_moves_topline);
-    fn scroll_moves_topline<B: Buffer>() {
-        let ctx = scroll_context::<B>();
+    fn scroll_moves_topline() {
+        let ctx = scroll_context();
         assert_eq!(ctx.window.buf_ctx.topline, 0);
     }
 }
