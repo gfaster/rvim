@@ -1,6 +1,6 @@
+use crate::textobj::motions::*;
 use crate::textobj::Motion;
-use crate::textobj::TextMotion;
-use crate::textobj::TextObject;
+use crate::textobj::word_object;
 use std::io::stdin;
 use std::io::Read;
 
@@ -76,14 +76,14 @@ fn handle_motion(c: char) -> Option<Motion> {
         'j' => Some(Motion::ScreenSpace { dy: 1, dx: 0 }),
         'k' => Some(Motion::ScreenSpace { dy: -1, dx: 0 }),
         'l' => Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
-        '0' => Some(Motion::TextMotion(TextMotion::StartOfLine)),
-        'b' => Some(Motion::TextMotion(TextMotion::WordSubsetBackward)),
-        'B' => Some(Motion::TextMotion(TextMotion::WordBackward)),
-        'w' => Some(Motion::TextMotion(TextMotion::WordSubsetForward)),
-        'W' => Some(Motion::TextMotion(TextMotion::WordForward)),
-        'e' => Some(Motion::TextMotion(TextMotion::WordEndSubsetForward)),
-        'E' => Some(Motion::TextMotion(TextMotion::WordEndForward)),
-        '$' => Some(Motion::TextMotion(TextMotion::EndOfLine)),
+        '0' => Some(Motion::TextMotion(start_of_line)),
+        'b' => Some(Motion::TextMotion(word_subset_backward)),
+        'B' => Some(Motion::TextMotion(word_backward)),
+        'w' => Some(Motion::TextMotion(word_subset_forward)),
+        'W' => Some(Motion::TextMotion(word_forward)),
+        'e' => Some(Motion::TextMotion(word_end_subset_forward)),
+        'E' => Some(Motion::TextMotion(word_end_forward)),
+        '$' => Some(Motion::TextMotion(end_of_line)),
         _ => panic!("handle_motion should only be called with motion"),
     }
 }
@@ -92,9 +92,7 @@ fn handle_textobj(a: Accepting, c: char) -> Option<Accepting> {
     match (a, c) {
         (Accepting::TextObject { op, md: _ }, _) => match c {
             'w' => Some(Accepting::Complete(Action {
-                motion: Some(Motion::TextObj(TextObject::WordObject(
-                    crate::textobj::WordObject,
-                ))),
+                motion: Some(Motion::TextObj(word_object)),
                 operation: op,
                 repeat: None,
             })),

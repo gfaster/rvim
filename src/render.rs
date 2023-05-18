@@ -2,7 +2,6 @@ use crate::input::Action;
 use crate::textobj::Motion;
 
 use crate::term;
-use crate::textobj::TextMot;
 use crate::window::*;
 use crate::{buffer::*, Mode};
 
@@ -131,7 +130,7 @@ impl Ctx
                 Motion::TextMotion(m) => {
                     let buf = &self.buffers[&self.focused()];
                     let buf_ctx = &mut self.window.buf_ctx;
-                    if let Some(newpos) = m.find_dest(buf, buf_ctx.cursorpos) {
+                    if let Some(newpos) = m(buf, buf_ctx.cursorpos) {
                         buf_ctx.set_pos(buf, newpos);
                     }
                 }
@@ -163,7 +162,7 @@ impl Ctx
                 let buf = &self.buffers[&id];
                 let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
                 eprintln!("line: {:?}", lines);
-                eprintln!("len: {:?}", lines.first().unwrap_or(&"").len());
+                eprintln!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
             }
         }
     }
