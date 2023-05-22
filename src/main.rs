@@ -28,6 +28,7 @@ use crate::debug::log;
 pub enum Mode {
     Normal,
     Insert,
+    Command
 }
 
 // how I handle the interrupts for now - exits on true

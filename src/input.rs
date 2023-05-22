@@ -4,7 +4,6 @@ use crate::textobj::word_object;
 use std::io::stdin;
 use std::io::Read;
 
-use crate::log;
 use crate::textobj::TextObjectModifier;
 use crate::Ctx;
 use crate::Mode;
@@ -41,12 +40,13 @@ pub fn handle_input(ctx: &Ctx) -> Option<Action>
 {
     match ctx.mode {
         Mode::Normal => handle_normal_mode(),
-        Mode::Insert => Some({
+        Mode::Insert | Mode::Command => Some({
             let c = stdin()
                 .bytes()
                 .map(|b| Some(char::from(b.ok()?)))
-                .next()??;
-            log!("{:x}", c as u32);
+                .next()
+                .flatten()?;
+            // log!("{:x}", c as u32);
             match c {
                 '\x1b' => Action {
                     // escape key, this needs to be more sophisticated for pasting
@@ -160,6 +160,11 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
         'i' => Some(Accepting::Complete(Action {
             motion: None,
             operation: Operation::SwitchMode(Mode::Insert),
+            repeat: None,
+        })),
+        ':' => Some(Accepting::Complete(Action {
+            motion: None,
+            operation: Operation::SwitchMode(Mode::Command),
             repeat: None,
         })),
         'x' => Some(Accepting::Complete(Action {

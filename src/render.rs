@@ -1,3 +1,6 @@
+use crate::command::cmdline::CommandLine;
+use crate::command::cmdline::CommandLineInput;
+use crate::debug::log;
 use crate::input::Action;
 use crate::textobj::Motion;
 
@@ -33,6 +36,7 @@ pub struct Ctx
     buffers: std::collections::BTreeMap<BufId, Buffer>,
     termios: Termios,
     orig: Termios,
+    command_line: CommandLine,
     pub term: RawFd,
     pub window: Window,
     pub mode: Mode,
@@ -54,6 +58,7 @@ impl Ctx
             term,
             mode: Mode::Normal,
             window,
+            command_line: Default::default()
         }
     }
 }
@@ -83,6 +88,7 @@ impl Ctx
             term,
             mode: Mode::Normal,
             window,
+            command_line: Default::default()
         }
     }
 
@@ -95,7 +101,16 @@ impl Ctx
     }
 
     pub fn render(&self) {
-        self.window.draw(self);
+        match self.mode {
+            Mode::Command => {
+                self.window.draw(self);
+                self.command_line.render();
+            },
+            _ => {
+                self.command_line.render();
+                self.window.draw(self);
+            }
+        }
     }
 
     pub fn focused(&self) -> BufId {
@@ -136,33 +151,49 @@ impl Ctx
                 }
             }
         }
-
-        match action.operation {
-            crate::input::Operation::Change => todo!(),
-            crate::input::Operation::Insert(c) => {
-                let buf_ctx = &mut self.window.buf_ctx;
-                let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
-                buf.insert_string(buf_ctx, c.replace('\r', "\n").as_str());
-                self.window.draw(self);
+        match self.mode {
+            Mode::Command => match action.operation {
+                crate::input::Operation::Insert(s) => {
+                    let c = s.chars().next().unwrap();
+                    if c == '\r' {
+                        self.command_line.input(CommandLineInput::Exec)
+                    } else {
+                        self.command_line.input(CommandLineInput::Append(c))
+                    }
+                },
+                crate::input::Operation::Delete => self.command_line.input(CommandLineInput::Delete),
+                crate::input::Operation::SwitchMode(m) => self.mode = m,
+                crate::input::Operation::Debug => todo!(),
+                crate::input::Operation::None => (),
+                _ => unreachable!()
             }
-            crate::input::Operation::Delete => {
-                let buf_ctx = &mut self.window.buf_ctx;
-                self.buffers
-                    .get_mut(&buf_ctx.buf_id)
-                    .unwrap()
-                    .delete_char(buf_ctx);
-                self.window.draw(self);
-            }
-            crate::input::Operation::SwitchMode(m) => self.mode = m,
-            crate::input::Operation::None => (),
-            crate::input::Operation::Replace(_) => todo!(),
-            crate::input::Operation::Debug => {
-                let buf_ctx = self.window.buf_ctx;
-                let id = buf_ctx.buf_id;
-                let buf = &self.buffers[&id];
-                let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
-                eprintln!("line: {:?}", lines);
-                eprintln!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
+            _ => match action.operation {
+                crate::input::Operation::Change => todo!(),
+                crate::input::Operation::Insert(c) => {
+                    let buf_ctx = &mut self.window.buf_ctx;
+                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
+                    buf.insert_string(buf_ctx, c.replace('\r', "\n").as_str());
+                    self.window.draw(self);
+                }
+                crate::input::Operation::Delete => {
+                    let buf_ctx = &mut self.window.buf_ctx;
+                    self.buffers
+                        .get_mut(&buf_ctx.buf_id)
+                        .unwrap()
+                        .delete_char(buf_ctx);
+                    self.window.draw(self);
+                }
+                crate::input::Operation::SwitchMode(m) => self.mode = m,
+                crate::input::Operation::None => (),
+                crate::input::Operation::Replace(_) => todo!(),
+                crate::input::Operation::Debug => {
+                    let buf_ctx = self.window.buf_ctx;
+                    let id = buf_ctx.buf_id;
+                    let buf = &self.buffers[&id];
+                    let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
+                    log!("line: {:?}", lines);
+                    log!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
+                }
             }
         }
     }

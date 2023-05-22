@@ -64,9 +64,15 @@ fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
     guard
 }
 
+pub fn is_init() -> bool{
+    OUTPUT.lock().map(|x| x.is_some()).unwrap_or(false)
+}
+
 pub fn cleanup() {
-    fs::remove_file(OUTPUT_FIFO_PATH)
-        .unwrap_or_else(|_| eprintln!("failed to delete fifo for log"));
+    if is_init() {
+        fs::remove_file(OUTPUT_FIFO_PATH)
+            .unwrap_or_else(|_| eprintln!("failed to delete fifo for log"));
+    }
 }
 
 pub fn log_args(args: fmt::Arguments) {

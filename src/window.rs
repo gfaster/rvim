@@ -215,16 +215,17 @@ impl DispComponent for StatusLine {
     fn draw(&self, win: &Window, ctx: &Ctx) {
         let base = win.reltoabs(TermPos {
             x: 0,
-            y: win.height() - 1,
+            y: win.height(),
         });
         term::goto(TermPos {
             x: base.x - win.padding.left,
-            y: base.y + 1,
+            y: base.y + 0,
         });
 
         match ctx.mode {
             crate::Mode::Normal => print!("\x1b[42;1;30m NORMAL \x1b[0m"),
             crate::Mode::Insert => print!("\x1b[44;1;30m INSERT \x1b[0m"),
+            crate::Mode::Command => print!("\x1b[44;1;30m COMMAND \x1b[0m"),
         }
         print!(
             "\x1b[40m {: <x$}\x1b[0m",
@@ -263,7 +264,7 @@ impl Window {
         let padding = components.iter().fold(
             Padding {
                 top: 0,
-                bottom: 0,
+                bottom: 1,
                 left: 0,
                 right: 0,
             },
@@ -291,6 +292,11 @@ impl Window {
             padding,
             dirty,
         }
+    }
+
+    pub fn resize(&mut self, dx: i32, dy: i32) {
+        self.botright.y = self.botright.y.checked_add_signed(dy).unwrap();
+        self.botright.x = self.botright.x.checked_add_signed(dx).unwrap();
     }
 
     pub fn width(&self) -> u32 {

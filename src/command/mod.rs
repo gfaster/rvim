@@ -1,22 +1,8 @@
 use crate::{buffer::Buffer, render::Ctx};
 use std::{error::Error, fs::OpenOptions, io::Read, path::PathBuf};
 mod parser;
+pub mod cmdline;
 
-/// The command buffer serves two purposes - entering commands and displaying errors/feedback
-///
-/// I think I'm going to want to separate out a sort of "render" trait to draw this.
-///
-/// For now, I'm going to make it only one line
-struct CommandBuffer {
-    msg: Option<String>,
-    content: Option<String>,
-}
-
-impl CommandBuffer {
-    fn log<'a>(&mut self, msg: impl AsRef<&'a str>) {
-        self.msg = msg.as_ref().lines().last().map(|s| s.to_string());
-    }
-}
 
 trait Command {
     fn exec(self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>>;
