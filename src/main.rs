@@ -106,11 +106,11 @@ fn panic_handler(pi: &PanicInfo) {
     debug::cleanup();
 
     if let Some(location) = pi.location() {
-        eprint!("Panicked at {}: {} ", location.file(), location.line());
+        eprintln!("Panicked at {}:{}", location.file(), location.line());
     }
 
-    if let Some(payload) = pi.payload().downcast_ref::<String>() {
-        eprint!("on: {:?}", payload);
+    if let Some(payload) = pi.payload().downcast_ref::<&str>() {
+        eprintln!("on: {:?}", payload);
     }
     eprint!("\n\n");
 }

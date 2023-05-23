@@ -138,8 +138,7 @@ impl Ctx
                     // type system here is kinda sneaky, can't use getbuf because all of self is
                     // borrowed
                     let buf = &self.buffers[&self.focused()];
-                    let buf_ctx = &mut self.window.buf_ctx;
-                    buf_ctx.move_cursor(buf, dx, dy)
+                    self.window.move_cursor(buf, dx, dy)
                 }
                 Motion::BufferSpace { doff: _ } => todo!(),
                 Motion::TextObj(_) => todo!(),
@@ -147,7 +146,7 @@ impl Ctx
                     let buf = &self.buffers[&self.focused()];
                     let buf_ctx = &mut self.window.buf_ctx;
                     if let Some(newpos) = m(buf, buf_ctx.cursorpos) {
-                        buf_ctx.set_pos(buf, newpos);
+                        self.window.set_pos(buf, newpos);
                     }
                 }
             }
@@ -157,7 +156,7 @@ impl Ctx
                 crate::input::Operation::Insert(s) => {
                     let c = s.chars().next().unwrap();
                     if c == '\r' {
-                        self.command_line.complete().map(|mut x| x.exec(self));
+                        self.command_line.complete().map(|x| x.exec(self));
                         self.mode = Mode::Normal;
                     } else {
                         self.command_line.input(CommandLineInput::Append(c));

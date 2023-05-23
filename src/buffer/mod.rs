@@ -66,10 +66,13 @@ impl DocPos {
 /// Some brief research tells us three possible solutions: Gap Buffer, Rope, or Piece Table. It
 /// seems like Piece Tables would be the best for now due to its simplicity, but I'll make Buffer
 /// into a trait since it seems worthwhile to implement all of them.
-pub type Buffer = piecetable::PTBuffer;
-pub use piecetable::PTBuffer;
+pub type Buffer = rope::RopeBuffer;
 
-mod piecetable;
+// pub use piecetable::PTBuffer;
+// mod piecetable;
+
+pub use rope::RopeBuffer;
+mod rope;
 // mod simplebuffer;
 
 // Default implementations of Buffer. I only ever pick a single implementation at compile time, so

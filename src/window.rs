@@ -44,9 +44,10 @@ impl BufCtx {
         TermPos { x, y }
     }
 
-    /// draw the window - I want to reconsider this generic
+    /// draw the window
     pub fn draw(&self, win: &Window, ctx: &Ctx) {
         let buf = ctx.getbuf(self.buf_id).unwrap();
+        // self.topline.clamp(self., max)
         let lines = buf.get_lines(self.topline..(self.topline + win.height() as usize));
         let basepos = win.reltoabs(TermPos { x: 0, y: 0 });
         for (i, l) in lines.into_iter().enumerate() {
@@ -66,26 +67,6 @@ impl BufCtx {
         }
     }
 
-    pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
-        let newy = self
-            .cursorpos
-            .y
-            .saturating_add_signed(dy)
-            .clamp(0, buf.linecnt());
-        let line = buf.get_lines(newy..(newy + 1))[0];
-        let newx = self
-            .cursorpos
-            .x
-            .saturating_add_signed(dx)
-            .clamp(0, line.len());
-
-        self.cursorpos.x = newx;
-        self.cursorpos.y = newy;
-    }
-
-    pub fn set_pos(&mut self, _buf: &Buffer, pos: DocPos) {
-        self.cursorpos = pos;
-    }
 }
 
 #[derive(Default)]
@@ -331,14 +312,33 @@ impl Window {
         term::flush();
     }
 
-    /// Why doesn't Window have the ability to move its own cursor?
-    ///
-    /// I think it will make things easier if only the buffer context is able to move the cursor.
-    /// Otherwise the window would either a) have to deal directly with buffers, or b) violate type
-    /// saftey by having both an immutable reference to Ctx and a mutable reference to a member of
-    /// Ctx
     pub fn cursorpos(&self) -> TermPos {
         self.buf_ctx.win_pos(self)
+    }
+
+    /// Move the cursor
+    pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
+        let newy = self.buf_ctx
+            .cursorpos
+            .y
+            .saturating_add_signed(dy)
+            .clamp(0, buf.linecnt());
+        let line = buf.get_lines(newy..(newy + 1))[0];
+        let newx = self.buf_ctx
+            .cursorpos
+            .x
+            .saturating_add_signed(dx)
+            .clamp(0, line.len());
+
+        self.buf_ctx.cursorpos.x = newx;
+        self.buf_ctx.cursorpos.y = newy;
+    }
+
+    pub fn set_pos(&mut self, buf: &Buffer, pos: DocPos) {
+        let newy = pos.y.clamp(0, buf.linecnt() - 1);
+        self.buf_ctx.cursorpos.y = newy;
+        let line = buf.get_lines(newy..(newy + 1))[0];
+        self.buf_ctx.cursorpos.x = pos.x.clamp(0, line.len());
     }
 
     // pub fn insert_char<B: Buffer>(&mut self,

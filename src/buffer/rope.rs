@@ -1,42 +1,134 @@
+use std::ffi::OsStr;
+use std::fmt::Write;
+use std::ops::Range;
+use std::path::Path;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::io::ErrorKind;
+
 use crate::buffer::DocPos;
 use crate::window::BufCtx;
-use std::ffi::OsStr;
-use std::io::{Write, ErrorKind};
-use std::ops::Range;
-use std::path::{Path, PathBuf};
 
 use super::DocRange;
 
-#[derive(Debug, Clone, Copy)]
-enum PTType {
-    Add,
-    Orig,
+/// normal operations are done as a standard character-wise rope. However, each node stores the
+/// total number of LFs in all of its children for faster line indexing. It's important to remember
+/// that there can be more characters after the final LF.
+struct Node {
+    lf_cnt: usize,
+    inner: NodeInner
 }
 
-// This is linewise, not characterwise
-#[derive(Debug, Clone, Copy)]
-struct PieceEntry {
-    /// type of the entry, either part of the original or new
-    which: PTType,
-
-    /// what entry of the relevant line buffer is the first of this entry
-    start: usize,
-
-    /// how many lines this entry accounts for
-    len: usize,
+enum NodeInner {
+    Leaf(Rc<String>, Range<usize>),
+    NonLeaf{l: Option<Box<Node>>, r: Option<Box<Node>>, weight: usize}
 }
 
-/// Piece Table Buffer
-pub struct PTBuffer {
+impl Node {
+    /// create a new, empty node without *any* characters
+    fn new() -> Self {
+        Self { lf_cnt: 0, inner: NodeInner::Leaf(Rc::from(String::new()),0..0) }
+    }
+
+    fn weight(&self) -> usize {
+        match self.inner {
+            NodeInner::Leaf(_, r) => r.len(),
+            NodeInner::NonLeaf { l, r, weight } => weight,
+        }
+    }
+
+    fn total_weight(&self) -> usize {
+        match self.inner {
+            NodeInner::Leaf(_, r) => r.len(),
+            NodeInner::NonLeaf { l, r, weight } => weight + r.map(|n| n.total_weight()).unwrap_or(0),
+        }
+    }
+
+    /// create a new node from left and right optional nodes
+    fn merge(left: Option<Self>, right: Option<Self>) -> Option<Self> {
+        match (left, right) {
+            (None, None) => None,
+            _ => Some(Node { 
+                lf_cnt: [left, right].into_iter().map(|x| x.map(|n| n.lf_cnt)).sum::<Option<usize>>().unwrap_or(0),
+                inner: NodeInner::NonLeaf { 
+                    l: left.map(Box::new),
+                    r: right.map(Box::new),
+                    weight: [left.map(|n| n.total_weight()), right.map(|n| n.total_weight())].into_iter().sum::<Option<_>>().unwrap_or(0),
+                }
+            })
+        }
+    }
+
+    /// split the rope into two sub ropes. The current rope will contain characters from `0..idx` and
+    /// the returned rope will contain characters in the range `idx..`
+    fn split_offset(self, idx: usize) -> (Option<Self>, Option<Self>) {
+        match self.inner {
+            NodeInner::Leaf(s, range) => {
+                // left split
+                let l_str = Rc::clone(&s);
+                let l_range = range.start..(range.start + idx);
+                let l_node;
+                if l_range.len() > 0 {
+                    l_node = Some(
+                        Self {
+                            lf_cnt: l_str[l_range].matches('\n').count(),
+                            inner: NodeInner::Leaf(l_str, l_range),
+                        }
+                    )
+                } else {
+                    l_node = None
+                }
+
+                // right split
+                let r_str = Rc::clone(&s);
+                let r_range = (range.start + idx)..range.end;
+                let r_node;
+                if r_range.len() > 0 {
+                    r_node = Some(
+                        Self {
+                            lf_cnt: r_str[r_range].matches('\n').count(),
+                            inner: NodeInner::Leaf(r_str, r_range),
+                        }
+                    )
+                } else {
+                    r_node = None
+                }
+                (l_node, r_node)
+            },
+            NodeInner::NonLeaf { l, r, weight } => match weight.cmp(&idx) {
+                std::cmp::Ordering::Less => {
+                    todo!()
+                },
+                std::cmp::Ordering::Equal => {
+                    todo!()
+                },
+                std::cmp::Ordering::Greater => {
+                    todo!()
+                },
+            },
+        }
+    }
+
+    fn split(&mut self, pos: DocPos) {
+
+    }
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Rope Buffer
+pub struct RopeBuffer {
     name: String,
     dirty: bool,
     path: Option<PathBuf>,
-    orig: Vec<String>,
-    add: Vec<String>,
-    table: Vec<PieceEntry>,
+    data: Node,
 }
 
-impl PTBuffer {
+impl RopeBuffer {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -70,9 +162,6 @@ impl PTBuffer {
         Self {
             path: None,
             name,
-            orig,
-            add,
-            table,
             dirty: !s.is_empty()
         }
     }
@@ -195,81 +284,5 @@ impl PTBuffer {
         let y = self.linecnt() - 1;
         let x = self.get_line(DocPos { x: 0, y }).0.len();
         DocPos { x, y }
-    }
-}
-
-impl PTBuffer {
-    fn match_table(&self, which: &PTType) -> &[String] {
-        match which {
-            PTType::Add => &self.add,
-            PTType::Orig => &self.orig,
-        }
-    }
-
-    /// Iterator over lines starting at table table entry tidx
-    fn lines_fwd_internal(&self, tidx: usize) -> impl Iterator<Item = &String> {
-        self.table[tidx..]
-            .iter()
-            .flat_map(|te| self.match_table(&te.which)[te.start..].iter().take(te.len))
-    }
-
-    /// Iterator over reverse-order lines starting at table entry tidx
-    fn lines_bck_internal(&self, tidx: usize) -> impl Iterator<Item = &String> {
-        self.table[..tidx].iter().rev().flat_map(|te| {
-            self.match_table(&te.which)[te.start..]
-                .iter()
-                .rev()
-                .take(te.len)
-        })
-    }
-
-    /// get the table idx and line at pos
-    ///
-    /// Return (line, tidx, te start line)
-    fn get_line(&self, pos: DocPos) -> (&str, usize, usize) {
-        let (tidx, first) = self.table_idx(pos);
-        let te = &self.table[tidx];
-        let rem = pos.y - first;
-        let line = &self.match_table(&te.which)[te.start + rem];
-
-        let truefirst = self.table[..tidx].iter().map(|te| te.len).sum();
-        assert!(
-            (truefirst..(truefirst + te.len)).contains(&pos.y),
-            "{:?} does not contain {pos:?}",
-            self.table[tidx]
-        );
-
-        (line, tidx, first)
-    }
-
-    /// returns the table idx and start line of entry for pos
-    ///
-    /// Returns: (table index, te start line)
-    fn table_idx(&self, pos: DocPos) -> (usize, usize) {
-        let mut line = 0;
-        let tidx = self
-            .table
-            .iter()
-            .enumerate()
-            .take_while(|x| {
-                if line + x.1.len <= pos.y {
-                    line += x.1.len;
-                    true
-                } else {
-                    false
-                }
-            })
-            .map(|(i, _)| i + 1)
-            .last()
-            .unwrap_or(0);
-
-        let truefirst = self.table[..tidx].iter().map(|te| te.len).sum();
-        assert!(
-            (truefirst..(truefirst + self.table[tidx].len)).contains(&pos.y),
-            "{:?} does not contain {pos:?}",
-            self.table[tidx]
-        );
-
-        (tidx, line)
     }
 }
