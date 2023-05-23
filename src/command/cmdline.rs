@@ -10,18 +10,26 @@ pub enum CommandLineInput {
 }
 
 pub enum CommandType {
-    Ex
+    Ex,
+    Find,
+    None
 }
 
 pub struct CommandLine {
     buf: String,
+    typ: CommandType,
 }
 
 impl CommandLine {
     pub fn render(&self) {
         let (w,h) = terminal_size::terminal_size().unwrap();
         term::goto(term::TermPos { x: 0, y: h.0 as u32 - 1 });
-        print!("\x1b[0m{: <width$}", self.buf, width=w.0 as usize);
+        let lead = match self.typ {
+            CommandType::Ex => ':',
+            CommandType::None => ' ',
+            CommandType::Find => '/',
+        };
+        print!("\x1b[0m{lead}{:width$}", self.buf, width=w.0 as usize - 1);
         term::flush();
     }
 
@@ -37,6 +45,10 @@ impl CommandLine {
         self.render();
     }
 
+    pub fn set_type(&mut self, typ: CommandType) {
+        self.typ = typ;
+    }
+
     pub fn complete(&mut self) -> Option<Box<dyn Command>> {
         let out = parser::parse_command(&self.buf);
         self.clear();
@@ -44,11 +56,12 @@ impl CommandLine {
     }
 
     pub fn clear(&mut self) {
+        self.typ = CommandType::None;
         self.buf.clear();
     }
 
     pub fn new() -> Self {
-        Self { buf: String::new() }
+        Self { buf: String::new(), typ: CommandType::None }
     }
 }
 

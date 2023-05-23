@@ -1,8 +1,9 @@
 use crate::buffer::DocPos;
 use crate::window::BufCtx;
-use std::io::Write;
+use std::ffi::OsStr;
+use std::io::{Write, ErrorKind};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 enum PTType {
@@ -21,6 +22,7 @@ struct PieceEntry {
 /// Piece Table Buffer
 pub struct PTBuffer {
     name: String,
+    path: Option<PathBuf>,
     orig: Vec<String>,
     add: Vec<String>,
     table: Vec<PieceEntry>,
@@ -31,9 +33,17 @@ impl PTBuffer {
         &self.name
     }
 
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_ref().map(PathBuf::as_path)
+    }
+
     pub fn open(file: &Path) -> Result<Self, std::io::Error> {
-        let data = std::fs::read_to_string(file)?;
-        Ok(Self::from_string(data))
+        let s = std::fs::read_to_string(file)?;
+        let mut res = Self::from_string(s);
+        res.path = Some(file.canonicalize()?);
+        res.name = file.file_name().map(OsStr::to_str).flatten().map(str::to_string)
+            .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))?;
+        Ok(res)
     }
 
     pub fn from_string(s: String) -> Self {
@@ -49,6 +59,7 @@ impl PTBuffer {
             len: orig.len(),
         }];
         Self {
+            path: None,
             name,
             orig,
             add,

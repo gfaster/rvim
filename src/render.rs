@@ -158,6 +158,7 @@ impl Ctx
                     let c = s.chars().next().unwrap();
                     if c == '\r' {
                         self.command_line.complete().map(|mut x| x.exec(self));
+                        self.mode = Mode::Normal;
                     } else {
                         self.command_line.input(CommandLineInput::Append(c));
                     }
@@ -184,7 +185,12 @@ impl Ctx
                         .delete_char(buf_ctx);
                     self.window.draw(self);
                 }
-                crate::input::Operation::SwitchMode(m) => self.mode = m,
+                crate::input::Operation::SwitchMode(m) => {
+                    if m == Mode::Command {
+                        self.command_line.set_type(crate::command::cmdline::CommandType::Ex)
+                    }
+                    self.mode = m
+                },
                 crate::input::Operation::None => (),
                 crate::input::Operation::Replace(_) => todo!(),
                 crate::input::Operation::Debug => {

@@ -69,8 +69,11 @@ impl DocPos {
 pub type Buffer = piecetable::PTBuffer;
 pub use piecetable::PTBuffer;
 
-/// Default implementations of Buffer. I only ever pick a single implementation at compile time, so
-/// I think this is good.
+mod piecetable;
+// mod simplebuffer;
+
+// Default implementations of Buffer. I only ever pick a single implementation at compile time, so
+// I think this is good.
 impl Buffer {
     pub fn chars_fwd(&self, pos: DocPos) -> BufIter
     where
@@ -99,9 +102,6 @@ impl Buffer {
     }
 }
 
-// I think I might want to refactor this from a generic to a singular type alias
-pub(crate) mod piecetable;
-pub(crate) mod simplebuffer;
 
 enum BufIterDir {
     Forward,
@@ -181,6 +181,7 @@ pub(crate) mod test {
     //
     // If I ever make the buffer a type alias rather than a trait, then the polytest macro should
     // only be used here, and made private again
+
 
     use super::*;
     use crate::render::BufId;
@@ -564,5 +565,11 @@ pub(crate) mod test {
         let buf: Buffer = buffer_with_changes();
 
         assert_eq!(buf.end(), DocPos { x: 10, y: 97 });
+    }
+
+    #[test]
+    fn path_none() {
+        let buf = Buffer::from_string("0123456789".to_string());
+        assert_eq!(buf.path(), None);
     }
 }
