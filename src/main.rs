@@ -22,6 +22,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+#[allow(unused_imports)]
 use crate::debug::log;
 
 #[derive(Clone, Copy)]

@@ -1,6 +1,6 @@
 use super::{Command, Edit, Write};
 
-fn parse_command(s: &str) -> Option<Box<dyn Command>> {
+pub fn parse_command(s: &str) -> Option<Box<dyn Command>> {
     let args = s.split_whitespace().collect::<Vec<_>>();
     Some(match *args.first()? {
         "w" | "write" => Box::new(Write {

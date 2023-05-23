@@ -1,13 +1,12 @@
 use crate::term;
 
-use super::Command;
+use super::{Command, parser};
 
 
 
 pub enum CommandLineInput {
     Append(char),
     Delete,
-    Exec
 }
 
 pub enum CommandType {
@@ -20,28 +19,27 @@ pub struct CommandLine {
 
 impl CommandLine {
     pub fn render(&self) {
-        term::goto(term::TermPos { x: 0, y: terminal_size::terminal_size().unwrap().1.0 as u32 - 1 });
-        print!("\x1b[0m{}", self.buf);
+        let (w,h) = terminal_size::terminal_size().unwrap();
+        term::goto(term::TermPos { x: 0, y: h.0 as u32 - 1 });
+        print!("\x1b[0m{: <width$}", self.buf, width=w.0 as usize);
         term::flush();
     }
 
-    pub fn input(&mut self, input: CommandLineInput) -> Option<Box<dyn Command>> {
-        let out;
+    pub fn input(&mut self, input: CommandLineInput) {
         match input {
             CommandLineInput::Append(c) => {
                 self.buf.push(c);
-                out = None;
             },
             CommandLineInput::Delete => {
                 self.buf.pop();
-                out = None;
-            },
-            CommandLineInput::Exec => {
-                todo!()
             },
         };
         self.render();
+    }
 
+    pub fn complete(&mut self) -> Option<Box<dyn Command>> {
+        let out = parser::parse_command(&self.buf);
+        self.clear();
         out
     }
 

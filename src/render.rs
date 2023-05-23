@@ -126,8 +126,9 @@ impl Ctx
         self.id_counter += 1;
         self.buffers
             .insert(buf_id, buf)
-            .expect("Buf insertion does not reuse ids");
+            .map(|_| panic!("Buf insertion tried to reuse an id"));
         self.window.buf_ctx.buf_id = buf_id;
+        self.window.clear();
     }
 
     pub fn process_action(&mut self, action: Action) {
@@ -156,9 +157,9 @@ impl Ctx
                 crate::input::Operation::Insert(s) => {
                     let c = s.chars().next().unwrap();
                     if c == '\r' {
-                        self.command_line.input(CommandLineInput::Exec)
+                        self.command_line.complete().map(|mut x| x.exec(self));
                     } else {
-                        self.command_line.input(CommandLineInput::Append(c))
+                        self.command_line.input(CommandLineInput::Append(c));
                     }
                 },
                 crate::input::Operation::Delete => self.command_line.input(CommandLineInput::Delete),
