@@ -42,16 +42,16 @@ impl Node {
     }
 
     fn weight(&self) -> usize {
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
-            NodeInner::NonLeaf { l, r, weight } => weight,
+            NodeInner::NonLeaf { l: _, r: _, weight } => *weight,
         }
     }
 
     fn total_weight(&self) -> usize {
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
-            NodeInner::NonLeaf { l, r, weight } => weight + r.map(|n| n.total_weight()).unwrap_or(0),
+            NodeInner::NonLeaf { l: _, r, weight } => weight + r.as_ref().map(|n| n.total_weight()).unwrap_or(0),
         }
     }
 
@@ -59,39 +59,39 @@ impl Node {
     ///
     /// either the string has now LF characters or the last character is an LF
     unsafe fn create_leaf_unchecked(s: &Rc<String>, r: Range<usize>) -> Self {
-        let lf_cnt = s[r].matches('\n').count();
+        let lf_cnt = s.as_str()[r.clone()].matches('\n').count();
         Self { lf_cnt, inner: NodeInner::Leaf(Rc::clone(s), r) }
     }
 
     fn leaf_is_valid(&self) -> bool {
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(s, r) => {
                 if r.len() == 0 {return false}
-                let lf_cnt = s[r].matches('\n').count();
+                let lf_cnt = s.as_str()[r.clone()].matches('\n').count();
                 if self.lf_cnt != lf_cnt {return false}
 
                 if lf_cnt >= 1 {
-                    s[r].as_bytes().last() == Some(&b'\n')
+                    s.as_str()[r.clone()].as_bytes().last() == Some(&b'\n')
                 } else {
                     true
                 }
             },
-            NodeInner::NonLeaf { l, r, weight } => {
+            NodeInner::NonLeaf { l: _, r: _, weight: _ } => {
                 true
             },
         }
     }
 
     fn validate_inner (&self) -> usize {
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(_, _) => {
                 assert!(self.leaf_is_valid());
                 self.weight()
             },
             NodeInner::NonLeaf { l, r, weight } => {
-                let l_size = l.map(|l| l.validate_inner()).unwrap_or(0);
-                let r_size = r.map(|r| r.validate_inner()).unwrap_or(0);
-                assert_eq!(l_size, weight);
+                let l_size = l.as_ref().map(|l| l.validate_inner()).unwrap_or(0);
+                let r_size = r.as_ref().map(|r| r.validate_inner()).unwrap_or(0);
+                assert_eq!(l_size, *weight);
                 l_size + r_size
             },
         }
@@ -105,9 +105,9 @@ impl Node {
     /// a single line or ending with and LF. Can return None if r is empty.
     fn create_from_string(s: &Rc<String>, r: Range<usize>) -> Option<Self> {
         if r.len() == 0 { return None };
-        let lf_cnt = s[r].matches('\n').count();
+        let lf_cnt = s.as_str()[r.clone()].matches('\n').count();
         let ret = if lf_cnt >= 1 {
-            let split_idx = s[r].rfind('\n').expect("multiline string has lf");
+            let split_idx = s.as_str()[r.clone()].rfind('\n').expect("multiline string has lf");
             if split_idx == r.len() - 1 {
                 Some(Self {
                     lf_cnt,
@@ -130,7 +130,7 @@ impl Node {
                 inner: NodeInner::Leaf(s.clone(), r),
             })
         };
-        ret.map(|n| n.validate());
+        ret.as_ref().map(|n| n.validate());
         ret
     }
 
@@ -140,16 +140,16 @@ impl Node {
             (None, None) => None,
             (None, r) => r,
             (l, None) => l,
-            _ => Some(Node { 
-                lf_cnt: [left, right].into_iter().map(|x| x.map(|n| n.lf_cnt)).sum::<Option<usize>>().unwrap_or(0),
+            (l, r) => Some(Node { 
+                lf_cnt: l.as_ref().map_or(0, |l| l.lf_cnt) + r.as_ref().map_or(0, |r| r.lf_cnt),
                 inner: NodeInner::NonLeaf { 
-                    l: left.map(Box::new),
-                    r: right.map(Box::new),
-                    weight: [left.map(|n| n.total_weight()), right.map(|n| n.total_weight())].into_iter().sum::<Option<_>>().unwrap_or(0),
+                    weight: l.as_ref().map_or(0, |l| l.total_weight()) + r.as_ref().map_or(0, |r| r.total_weight()),
+                    l: l.map(Box::new),
+                    r: r.map(Box::new),
                 }
             })
         };
-        ret.map(|n| n.validate());
+        ret.as_ref().map(|n| n.validate());
         ret
     }
 
@@ -189,17 +189,18 @@ impl Node {
         }
     }
 
-    fn split(&mut self, pos: DocPos) -> (Option<Node>, Option<Node>){
-        self.split_offset(self.doc_pos_to_offset(pos).unwrap())
+    fn split(self, pos: DocPos) -> (Option<Node>, Option<Node>){
+        let off = self.doc_pos_to_offset(pos).unwrap();
+        self.split_offset(off)
     }
 
     fn num_trailing_chars(&self) -> usize {
         if self.lf_cnt == 0 { return self.total_weight() }
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(_, _) => 0,
-            NodeInner::NonLeaf { l, r, weight } => {
-                r.map_or(0, |r| r.num_trailing_chars()) + 
-                r.filter(|r| r.lf_cnt == 0).map_or(0, |_| l.map_or(0, |l| l.num_trailing_chars()))
+            NodeInner::NonLeaf { l, r, weight: _ } => {
+                r.as_ref().map_or(0, |r| r.num_trailing_chars()) + 
+                r.as_ref().filter(|r| r.lf_cnt == 0).map_or(0, |_| l.as_ref().map_or(0, |l| l.num_trailing_chars()))
             },
         }
     }
@@ -209,20 +210,20 @@ impl Node {
     /// This doesn't actually need my line invariant - maybe I can get rid of it
     fn doc_pos_to_offset(&self, pos: DocPos) -> Option<usize> {
         if pos.y > self.lf_cnt {return None};
-        match self.inner {
+        match &self.inner {
             NodeInner::Leaf(s, r) => {
-                let line_idx: usize = s[r].lines().map(str::len).take(pos.y).sum();
-                if pos.x > s[r][line_idx..].lines().nth(0)?.len() {
+                let line_idx: usize = s.as_str()[r.clone()].lines().map(str::len).take(pos.y).sum();
+                if pos.x > s.as_str()[r.clone()][line_idx..].lines().nth(0)?.len() {
                     None
                 } else {
                     Some(line_idx + pos.x)
                 }
             },
             NodeInner::NonLeaf { l, r, weight } => {
-                l.map(|l| l.doc_pos_to_offset(pos))
+                l.as_ref().map(|l| l.doc_pos_to_offset(pos))
                     .flatten()
-                    .or_else(|| r.map(|r| {
-                        r.doc_pos_to_offset(DocPos { x: pos.x - l.map_or(0, |l| l.num_trailing_chars()), y: pos.y - l.map_or(0, |l| l.lf_cnt) })
+                    .or_else(|| r.as_ref().map(|r| {
+                        r.doc_pos_to_offset(DocPos { x: pos.x - l.as_ref().map_or(0, |l| l.num_trailing_chars()), y: pos.y - l.as_ref().map_or(0, |l| l.lf_cnt) })
                             .map(|off| off + weight)
                     }).flatten())
             },
@@ -231,16 +232,19 @@ impl Node {
 
     fn insert_offset(self, idx: usize, s: String) -> Self {
         let (l, r) = self.split_offset(idx);
-        let new = Self::create_from_string(&Rc::new(s), 0..(s.len()));
+        let range = 0..(s.as_str().len());
+        let new = Self::create_from_string(&Rc::new(s), range);
         Self::merge(l, Self::merge(new, r)).unwrap_or_else(|| Self::default())
     }
 
     fn insert(self, pos: DocPos, s: String) -> Self {
-        self.insert_offset(self.doc_pos_to_offset(pos).unwrap(), s)
+        let off = self.doc_pos_to_offset(pos).unwrap();
+        self.insert_offset(off, s)
     }
 
     fn insert_char(self, pos: DocPos, c: char) -> Self {
-        self.insert_offset(self.doc_pos_to_offset(pos).unwrap(), c.into())
+        let off = self.doc_pos_to_offset(pos).unwrap();
+        self.insert_offset(off, c.into())
     }
 
     fn delete_range_offset(self, range: Range<usize>) -> Self {
@@ -269,16 +273,17 @@ impl Node {
             match &n.inner {
                 NodeInner::Leaf(s, r) => {
                     assert!(curr_idx + r.len() > off);
-                    ret.curr = Some(s.as_str()[*r].chars());
+                    ret.curr = Some(s.as_str()[r.clone()].chars());
                     if curr_idx > off {
-                        ret.curr.expect("just set").nth(off - curr_idx - 1);
+                        ret.curr.as_mut().expect("just set").nth(off - curr_idx - 1);
                     }
                     break;
                 },
                 NodeInner::NonLeaf { l, r, weight } => {
-                    r.map(|r| ret.stack.push_front(&r));
+                    r.as_ref().map(|r| ret.stack.push_front(&r));
                     if curr_idx + weight < off {
-                        ret.stack.push_front( &l.expect("non-zero weight implies left child and index not more than offset"));
+                        ret.stack.push_front( &l.as_ref().expect("non-zero weight implies left child and index not more than offset"));
+                        curr_idx += weight;
                     }
                 },
             }
@@ -286,13 +291,13 @@ impl Node {
         ret
     }
 
-    fn backward_iter(&self, pos: DocPos) -> RopeBackwardIter {
+    fn backward_iter(&self, _pos: DocPos) -> RopeBackwardIter {
         todo!()
     }
 }
 
 
-struct RopeForwardIter<'a> {
+pub struct RopeForwardIter<'a> {
     stack: VecDeque<&'a Node>,
     curr: Option<Chars<'a>>,
     pos: DocPos
@@ -303,22 +308,22 @@ impl Iterator for RopeForwardIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let ret_c = {
-            if let Some(c) = self.curr?.next() {
+            if let Some(c) = self.curr.as_mut()?.next() {
                 Some(c)
             } else {
                 while let Some(front) = self.stack.pop_front() {
-                    match front.inner {
+                    match &front.inner {
                         NodeInner::Leaf(s, r) => {
-                            self.curr = Some(s[r].chars());
+                            self.curr = Some(s.as_str()[r.clone()].chars());
                             break;
                         },
-                        NodeInner::NonLeaf { l, r, weight } => {
-                            r.map(|r| self.stack.push_front(&r));
-                            l.map(|l| self.stack.push_front(&l));
+                        NodeInner::NonLeaf { l, r, weight: _ } => {
+                            r.as_ref().map(|r| self.stack.push_front(&r));
+                            l.as_ref().map(|l| self.stack.push_front(&l));
                         },
                     }
                 };
-                self.curr?.next()
+                self.curr.as_mut()?.next()
             }
         }?;
 
@@ -336,7 +341,7 @@ impl Iterator for RopeForwardIter<'_> {
     }
 }
 
-struct RopeBackwardIter<'a> {
+pub struct RopeBackwardIter<'a> {
     stack: VecDeque<&'a Node>,
     curr: Option<Rev<Chars<'a>>>,
     pos: DocPos
@@ -385,11 +390,12 @@ impl RopeBuffer {
 
     pub fn from_string(s: String) -> Self {
         let name = "new buffer".to_string();
+        let range = 0..(s.len());
         Self {
             name,
             dirty: !s.is_empty(),
             path: None,
-            data: Node::create_from_string(&Rc::new(s), 0..(s.len())).unwrap_or_default(),
+            data: Node::create_from_string(&Rc::new(s), range).unwrap_or_default(),
         }
     }
 
@@ -397,14 +403,16 @@ impl RopeBuffer {
     }
 
     pub fn delete_range(&mut self, r: DocRange) {
-        self.data = self.data.delete_range(r);
+        let new = std::mem::take(&mut self.data).delete_range(r);
+        self.data = new;
     }
 
     pub fn replace_range(&mut self, _ctx: &mut BufCtx, _r: DocRange, _s: &str) {
     }
 
     pub fn insert_string(&mut self, ctx: &mut BufCtx, s: &str) {
-        self.data = self.data.insert(ctx.cursorpos, s.to_string())
+        let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s.to_string());
+        self.data = new;
     }
 
     pub fn get_off(&self, _pos: DocPos) -> usize {

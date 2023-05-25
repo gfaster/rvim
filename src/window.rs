@@ -323,7 +323,7 @@ impl Window {
             .y
             .saturating_add_signed(dy)
             .clamp(0, buf.linecnt());
-        let line = buf.get_lines(newy..(newy + 1))[0];
+        let line = &buf.get_lines(newy..(newy + 1))[0];
         let newx = self.buf_ctx
             .cursorpos
             .x
@@ -337,7 +337,7 @@ impl Window {
     pub fn set_pos(&mut self, buf: &Buffer, pos: DocPos) {
         let newy = pos.y.clamp(0, buf.linecnt() - 1);
         self.buf_ctx.cursorpos.y = newy;
-        let line = buf.get_lines(newy..(newy + 1))[0];
+        let line = &buf.get_lines(newy..(newy + 1))[0];
         self.buf_ctx.cursorpos.x = pos.x.clamp(0, line.len());
     }
 
