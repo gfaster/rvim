@@ -8,7 +8,6 @@ mod term;
 mod textobj;
 mod window;
 
-
 use libc::STDIN_FILENO;
 use nix::sys::termios::{self, Termios};
 use nix::sys::{
@@ -29,7 +28,7 @@ use crate::debug::log;
 pub enum Mode {
     Normal,
     Insert,
-    Command
+    Command,
 }
 
 // how I handle the interrupts for now - exits on true

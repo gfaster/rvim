@@ -1,8 +1,7 @@
 use crate::{buffer::Buffer, render::Ctx};
-use std::{error::Error, fs::OpenOptions, io::Read, path::PathBuf, fmt::Display};
-mod parser;
+use std::{error::Error, fmt::Display, fs::OpenOptions, io::Read, path::PathBuf};
 pub mod cmdline;
-
+mod parser;
 
 pub trait Command {
     fn exec(self: Box<Self>, ctx: &mut Ctx) -> Result<(), Box<dyn Error>>;
@@ -20,15 +19,17 @@ impl Display for WriteCommandError {
         f.write_str("Write command error")
     }
 }
-impl Error for WriteCommandError { }
+impl Error for WriteCommandError {}
 
 impl Command for Write {
     fn exec(self: Box<Self>, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(self.filename.as_ref().map(PathBuf::as_path)
-                .or_else(|| ctx.focused_buf().path()).ok_or(Box::new(WriteCommandError))?)?;
+        let mut f = OpenOptions::new().write(true).create(true).open(
+            self.filename
+                .as_ref()
+                .map(PathBuf::as_path)
+                .or_else(|| ctx.focused_buf().path())
+                .ok_or(Box::new(WriteCommandError))?,
+        )?;
         ctx.focused_buf().serialize(&mut f)?;
         Ok(())
     }

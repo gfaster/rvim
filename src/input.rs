@@ -1,6 +1,6 @@
 use crate::textobj::motions::*;
-use crate::textobj::Motion;
 use crate::textobj::word_object;
+use crate::textobj::Motion;
 use std::io::stdin;
 use std::io::Read;
 
@@ -36,8 +36,7 @@ pub struct Action {
     pub repeat: Option<u32>,
 }
 
-pub fn handle_input(ctx: &Ctx) -> Option<Action>
-{
+pub fn handle_input(ctx: &Ctx) -> Option<Action> {
     match ctx.mode {
         Mode::Normal => handle_normal_mode(),
         Mode::Insert | Mode::Command => Some({

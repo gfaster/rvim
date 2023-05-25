@@ -1,8 +1,6 @@
 use crate::term;
 
-use super::{Command, parser};
-
-
+use super::{parser, Command};
 
 pub enum CommandLineInput {
     Append(char),
@@ -12,7 +10,7 @@ pub enum CommandLineInput {
 pub enum CommandType {
     Ex,
     Find,
-    None
+    None,
 }
 
 pub struct CommandLine {
@@ -22,14 +20,17 @@ pub struct CommandLine {
 
 impl CommandLine {
     pub fn render(&self) {
-        let (w,h) = terminal_size::terminal_size().unwrap();
-        term::goto(term::TermPos { x: 0, y: h.0 as u32 - 1 });
+        let (w, h) = terminal_size::terminal_size().unwrap();
+        term::goto(term::TermPos {
+            x: 0,
+            y: h.0 as u32 - 1,
+        });
         let lead = match self.typ {
             CommandType::Ex => ':',
             CommandType::None => ' ',
             CommandType::Find => '/',
         };
-        print!("\x1b[0m{lead}{:width$}", self.buf, width=w.0 as usize - 1);
+        print!("\x1b[0m{lead}{:width$}", self.buf, width = w.0 as usize - 1);
         term::flush();
     }
 
@@ -37,10 +38,10 @@ impl CommandLine {
         match input {
             CommandLineInput::Append(c) => {
                 self.buf.push(c);
-            },
+            }
             CommandLineInput::Delete => {
                 self.buf.pop();
-            },
+            }
         };
         self.render();
     }
@@ -61,7 +62,10 @@ impl CommandLine {
     }
 
     pub fn new() -> Self {
-        Self { buf: String::new(), typ: CommandType::None }
+        Self {
+            buf: String::new(),
+            typ: CommandType::None,
+        }
     }
 }
 
@@ -70,4 +74,3 @@ impl Default for CommandLine {
         Self::new()
     }
 }
-

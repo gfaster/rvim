@@ -75,16 +75,12 @@ pub use rope::RopeBuffer;
 mod rope;
 // mod simplebuffer;
 
-
-
-
 #[cfg(test)]
 pub(crate) mod test {
     // declared public to allow export of polytest
     //
     // If I ever make the buffer a type alias rather than a trait, then the polytest macro should
     // only be used here, and made private again
-
 
     use super::*;
     use crate::render::BufId;
@@ -93,8 +89,7 @@ pub(crate) mod test {
     /// make a generic test function run over all buffer implementations
     #[allow(unused)]
     macro_rules! polytest {
-        ($func:ident) => {
-        };
+        ($func:ident) => {};
     }
 
     fn assert_buf_eq(b: &Buffer, s: &str) -> String {

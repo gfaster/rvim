@@ -66,7 +66,6 @@ impl BufCtx {
             topline: 0,
         }
     }
-
 }
 
 #[derive(Default)]
@@ -318,13 +317,15 @@ impl Window {
 
     /// Move the cursor
     pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
-        let newy = self.buf_ctx
+        let newy = self
+            .buf_ctx
             .cursorpos
             .y
             .saturating_add_signed(dy)
             .clamp(0, buf.linecnt());
         let line = &buf.get_lines(newy..(newy + 1))[0];
-        let newx = self.buf_ctx
+        let newx = self
+            .buf_ctx
             .cursorpos
             .x
             .saturating_add_signed(dx)

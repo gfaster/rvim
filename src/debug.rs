@@ -64,7 +64,7 @@ fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
     guard
 }
 
-pub fn is_init() -> bool{
+pub fn is_init() -> bool {
     OUTPUT.lock().map(|x| x.is_some()).unwrap_or(false)
 }
 

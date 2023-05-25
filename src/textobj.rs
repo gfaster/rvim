@@ -91,9 +91,9 @@ pub mod motions {
             let Some(x) = it.peek() else {return Some(buf.end())};
             x
         }
-            .1
-            .category()
-        != WordCat::Whitespace
+        .1
+        .category()
+            != WordCat::Whitespace
         {
             ret = *it.peek()?;
             it.next();
@@ -113,9 +113,9 @@ pub mod motions {
             let Some(x) = it.peek() else {return Some(buf.end())};
             x
         }
-            .1
-            .category()
-        == init
+        .1
+        .category()
+            == init
         {
             ret = *it.peek()?;
             it.next();
@@ -134,9 +134,9 @@ pub mod motions {
             let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
             x
         }
-            .1
-            .category()
-        != WordCat::Whitespace
+        .1
+        .category()
+            != WordCat::Whitespace
         {
             ret = *it.peek()?;
             it.next();
@@ -156,9 +156,9 @@ pub mod motions {
             let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
             x
         }
-            .1
-            .category()
-        == init
+        .1
+        .category()
+            == init
         {
             ret = *it.peek()?;
             it.next();
@@ -193,9 +193,7 @@ pub mod motions {
 /*
 */
 
-
-
-pub fn text_object_from_motion(motion: TextMotion, buf: &Buffer, off:DocPos) -> Option<DocRange> {
+pub fn text_object_from_motion(motion: TextMotion, buf: &Buffer, off: DocPos) -> Option<DocRange> {
     let finish = motion(buf, off)?;
     if finish < off {
         Some(DocRange {
@@ -217,9 +215,9 @@ pub fn word_object(_buf: &Buffer, _pos: DocPos) -> Option<DocRange> {
 #[cfg(test)]
 mod test {
 
-    use super::*;
     use super::motions::*;
     use super::TextMotion;
+    use super::*;
 
     // TODO: write some macros for these tests
 
@@ -288,10 +286,7 @@ mod test {
     #[test]
     fn word_bck_basic() {
         let buf = Buffer::from_string("abcd efg".to_string());
-        assert_eq!(
-            word_backward(&buf, buf.end()),
-            Some(DocPos { x: 5, y: 0 })
-        );
+        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 5, y: 0 }));
     }
 
     #[test]
@@ -306,28 +301,19 @@ mod test {
     #[test]
     fn word_bck_newl() {
         let buf = Buffer::from_string("abcd\nefg\na".to_string());
-        assert_eq!(
-            word_backward(&buf, buf.end()),
-            Some(DocPos { x: 0, y: 2 })
-        );
+        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 2 }));
     }
 
     #[test]
     fn word_bck_space_then_newl() {
         let buf = Buffer::from_string("abcd\n    efg\n    ".to_string());
-        assert_eq!(
-            word_backward(&buf, buf.end()),
-            Some(DocPos { x: 4, y: 1 })
-        );
+        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 4, y: 1 }));
     }
 
     #[test]
     fn word_bck_end() {
         let buf = Buffer::from_string("abcdefg".to_string());
-        assert_eq!(
-            word_backward(&buf, buf.end()),
-            Some(DocPos { x: 0, y: 0 })
-        );
+        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 0 }));
     }
 
     #[test]

@@ -30,8 +30,7 @@ impl BufId {
     }
 }
 
-pub struct Ctx
-{
+pub struct Ctx {
     id_counter: usize,
     buffers: std::collections::BTreeMap<BufId, Buffer>,
     termios: Termios,
@@ -43,8 +42,7 @@ pub struct Ctx
 }
 
 #[cfg(test)]
-impl Ctx
-{
+impl Ctx {
     pub fn new_testing(buf: Buffer) -> Self {
         let term = libc::STDIN_FILENO;
         let termios = termios::tcgetattr(term).unwrap();
@@ -58,13 +56,12 @@ impl Ctx
             term,
             mode: Mode::Normal,
             window,
-            command_line: Default::default()
+            command_line: Default::default(),
         }
     }
 }
 
-impl Ctx
-{
+impl Ctx {
     pub fn from_file(term: RawFd, file: &Path) -> std::io::Result<Self> {
         let buf = Buffer::open(file)?;
         Ok(Self::from_buffer(term, buf))
@@ -88,7 +85,7 @@ impl Ctx
             term,
             mode: Mode::Normal,
             window,
-            command_line: Default::default()
+            command_line: Default::default(),
         }
     }
 
@@ -105,7 +102,7 @@ impl Ctx
             Mode::Command => {
                 self.window.draw(self);
                 self.command_line.render();
-            },
+            }
             _ => {
                 self.command_line.render();
                 self.window.draw(self);
@@ -161,13 +158,15 @@ impl Ctx
                     } else {
                         self.command_line.input(CommandLineInput::Append(c));
                     }
-                },
-                crate::input::Operation::Delete => self.command_line.input(CommandLineInput::Delete),
+                }
+                crate::input::Operation::Delete => {
+                    self.command_line.input(CommandLineInput::Delete)
+                }
                 crate::input::Operation::SwitchMode(m) => self.mode = m,
                 crate::input::Operation::Debug => todo!(),
                 crate::input::Operation::None => (),
-                _ => unreachable!()
-            }
+                _ => unreachable!(),
+            },
             _ => match action.operation {
                 crate::input::Operation::Change => todo!(),
                 crate::input::Operation::Insert(c) => {
@@ -186,10 +185,11 @@ impl Ctx
                 }
                 crate::input::Operation::SwitchMode(m) => {
                     if m == Mode::Command {
-                        self.command_line.set_type(crate::command::cmdline::CommandType::Ex)
+                        self.command_line
+                            .set_type(crate::command::cmdline::CommandType::Ex)
                     }
                     self.mode = m
-                },
+                }
                 crate::input::Operation::None => (),
                 crate::input::Operation::Replace(_) => todo!(),
                 crate::input::Operation::Debug => {
@@ -200,7 +200,7 @@ impl Ctx
                     log!("line: {:?}", lines);
                     log!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
                 }
-            }
+            },
         }
     }
 }
