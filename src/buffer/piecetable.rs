@@ -273,3 +273,103 @@ impl PTBuffer {
         (tidx, line)
     }
 }
+
+impl PTBuffer {
+    pub fn chars_fwd(&self, pos: DocPos) -> BufIter
+    where
+        Self: Sized,
+    {
+        BufIter {
+            buf: self,
+            line: None,
+            pos,
+            dir: BufIterDir::Forward,
+            next_none: false,
+        }
+    }
+
+    pub fn chars_bck(&self, pos: DocPos) -> BufIter
+    where
+        Self: Sized,
+    {
+        BufIter {
+            buf: self,
+            line: None,
+            pos,
+            dir: BufIterDir::Backward,
+            next_none: false,
+        }
+    }
+}
+
+enum BufIterDir {
+    Forward,
+    Backward,
+}
+
+/// Iterator over the characters in a buffer - I should maybe make this into one for forward and
+/// one for backward
+pub struct BufIter<'a> {
+    buf: &'a Buffer,
+    line: Option<&'a str>,
+    pos: DocPos,
+    dir: BufIterDir,
+    next_none: bool,
+}
+
+impl Iterator for BufIter<'_> {
+    type Item = (DocPos, char);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos.y >= self.buf.linecnt() || self.next_none {
+            return None;
+        }
+
+        let line = self.line.unwrap_or_else(|| {
+            let l = self.buf.get_lines(self.pos.y..(self.pos.y + 1))[0];
+            self.pos = DocPos {
+                x: self.pos.x.min(l.len()),
+                y: self.pos.y,
+            };
+            self.line = Some(l);
+            l
+        });
+
+        let virt = self.pos;
+
+        match self.dir {
+            BufIterDir::Forward => {
+                if virt.x + 1 > line.len() {
+                    self.pos.x = 0;
+                    self.pos.y += 1;
+                    self.line = None;
+                } else {
+                    self.pos.x += 1;
+                }
+                let c = line
+                    .chars()
+                    .chain(['\n']).nth(virt.x)
+                    .expect("iterate to real char (does this line have non-ascii?)");
+                Some((virt, c))
+            }
+            BufIterDir::Backward => {
+                if virt.x == 0 {
+                    self.pos.x = usize::MAX;
+                    if self.pos.y == 0 {
+                        self.next_none = true;
+                    } else {
+                        self.pos.y -= 1;
+                    }
+                    self.line = None;
+                } else {
+                    self.pos.x -= 1;
+                }
+                let c = line
+                    .chars()
+                    .chain(['\n']).nth(virt.x)
+                    .expect("iterate to real char (does this line have non-ascii?)");
+                Some((virt, c))
+            }
+        }
+    }
+}
