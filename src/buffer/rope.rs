@@ -566,6 +566,71 @@ mod test {
     }
 
     #[test]
+    fn insert_into_rope_end() {
+        assert_eq!(
+            Rope::from("abcd")
+                .insert_offset(0, "---".into())
+                .to_string(),
+            "abcd---"
+        );
+    }
+
+    #[test]
+    fn insert_into_rope_begin() {
+        assert_eq!(
+            Rope::from("abcd")
+                .insert_offset(0, "---".into())
+                .to_string(),
+            "---abcd"
+        );
+    }
+
+    #[test]
+    fn insert_into_rope_repeat() {
+        let mut rope = Rope::from("abcd")
+                .insert_offset(2, "---".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab---cd"
+        );
+        rope = rope.insert_offset(3, "+++".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab-+++--cd"
+        );
+    }
+
+    #[test]
+    fn insert_into_rope_begin_of_insertion() {
+        let mut rope = Rope::from("abcd")
+                .insert_offset(2, "---".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab---cd"
+        );
+        rope = rope.insert_offset(2, "+++".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab+++---cd"
+        );
+    }
+
+    #[test]
+    fn insert_into_rope_end_of_insertion() {
+        let mut rope = Rope::from("abcd")
+                .insert_offset(2, "---".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab---cd"
+        );
+        rope = rope.insert_offset(5, "+++".into());
+        assert_eq!(
+            rope.to_string(),
+            "ab---+++cd"
+        );
+    }
+
+    #[test]
     fn doc_pos_to_offset_simple() {
         assert_eq!(
             Rope::from("asdf").doc_pos_to_offset(DocPos { x: 2, y: 0 }),
