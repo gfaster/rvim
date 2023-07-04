@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fmt::Display;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::iter::Rev;
@@ -17,11 +18,13 @@ use super::DocRange;
 /// normal operations are done as a standard character-wise rope. However, each node stores the
 /// total number of LFs in all of its children for faster line indexing. It's important to remember
 /// that there can be more characters after the final LF.
-struct Node {
+#[derive(Debug)]
+struct Rope {
     lf_cnt: usize,
     inner: NodeInner,
 }
 
+#[derive(Debug)]
 enum NodeInner {
     /// leaf node that contains a string. The actual storage is a Rc<String> and a range that
     /// denotes the characters of the string that the leaft actually contains. This sets us up for
@@ -33,18 +36,17 @@ enum NodeInner {
 
     /// Non-leaf node. weight is the total number of bytes of the left subtree (0 if left is None)
     NonLeaf {
-        l: Option<Box<Node>>,
-        r: Option<Box<Node>>,
+        l: Option<Box<Rope>>,
+        r: Option<Box<Rope>>,
         weight: usize,
     },
 }
 
-impl Node {
-    /// create a new, empty node with only a new line (minimal valid)
+impl Rope {
     fn new() -> Self {
         Self {
-            lf_cnt: 1,
-            inner: NodeInner::Leaf(Rc::from("\n".to_string()), 0..1),
+            lf_cnt: 0,
+            inner: NodeInner::Leaf(Rc::from(String::new()), 0..0),
         }
     }
 
@@ -73,7 +75,14 @@ impl Node {
             NodeInner::NonLeaf { l, r, weight } => {
                 let l_size = l.as_ref().map(|l| l.validate_inner()).unwrap_or(0);
                 let r_size = r.as_ref().map(|r| r.validate_inner()).unwrap_or(0);
-                assert_eq!(l_size, *weight);
+                assert_eq!(
+                    l_size,
+                    *weight,
+                    "Rope: {:?}\nhas weight {} but should be {}",
+                    l.as_ref().map_or("".to_string(), |l| l.to_string()),
+                    weight,
+                    l_size
+                );
                 l_size + r_size
             }
         }
@@ -81,6 +90,31 @@ impl Node {
 
     fn validate(&self) {
         self.validate_inner();
+    }
+
+    fn regen_weight_inner(&mut self) -> usize {
+        eprintln!("regenerating weight for {self:#?}");
+        match &mut self.inner {
+            NodeInner::Leaf(_, r) => r.len(),
+            NodeInner::NonLeaf {
+                ref mut l,
+                ref mut r,
+                ref mut weight,
+            } => {
+                *weight = l.as_mut().map_or(0, |l| l.regen_weight_inner());
+                *weight + r.as_mut().map_or(0, |r| {
+                        if let NodeInner::NonLeaf { .. } = &r.inner {
+                            r.regen_weight_inner()
+                        } else {
+                            0
+                        }
+                    })
+            }
+        }
+    }
+
+    fn regen_weight(&mut self) {
+        self.regen_weight_inner();
     }
 
     /// creates a new node from string, following the invarient of each leaf being either a part of
@@ -97,9 +131,10 @@ impl Node {
             if split_idx == r.len() - 1 {
                 Some(Self {
                     lf_cnt,
-                    inner: NodeInner::Leaf(s.clone(), r),
+                    inner: NodeInner::Leaf(Rc::clone(s), r),
                 })
             } else {
+                assert_eq!((r.start..(r.start + split_idx + 1)).len(),split_idx + 1);
                 Some(Self {
                     lf_cnt,
                     inner: NodeInner::NonLeaf {
@@ -114,7 +149,7 @@ impl Node {
                             lf_cnt,
                             inner: NodeInner::Leaf(Rc::clone(s), (r.start + split_idx + 1)..r.end),
                         })),
-                        weight: split_idx,
+                        weight: split_idx + 1,
                     },
                 })
             }
@@ -130,11 +165,11 @@ impl Node {
 
     /// create a new node from left and right optional nodes
     fn merge(left: Option<Self>, right: Option<Self>) -> Option<Self> {
-        let ret = match (left, right) {
+        let mut ret = match (left, right) {
             (None, None) => None,
             (None, r) => r,
             (l, None) => l,
-            (l, r) => Some(Node {
+            (l, r) => Some(Rope {
                 lf_cnt: l.as_ref().map_or(0, |l| l.lf_cnt) + r.as_ref().map_or(0, |r| r.lf_cnt),
                 inner: NodeInner::NonLeaf {
                     weight: l.as_ref().map_or(0, |l| l.total_weight())
@@ -144,22 +179,23 @@ impl Node {
                 },
             }),
         };
-        ret.as_ref().map(|n| n.validate());
+        ret.as_mut().map(Rope::regen_weight);
+        ret.as_ref().map(|n| dbg!(n).validate());
         ret
     }
 
     /// split the rope into two sub ropes. The current rope will contain characters from `0..idx` and
     /// the returned rope will contain characters in the range `idx..`
     fn split_offset(self, idx: usize) -> (Option<Self>, Option<Self>) {
-        match self.inner {
+        let ret = match self.inner {
             NodeInner::Leaf(s, range) => {
                 // left split
                 let l_range = range.start..(range.start + idx);
-                let l_node = Node::create_from_string(&s, l_range);
+                let l_node = Rope::create_from_string(&s, l_range);
 
                 // right split
                 let r_range = (range.start + idx)..range.end;
-                let r_node = Node::create_from_string(&s, r_range);
+                let r_node = Rope::create_from_string(&s, r_range);
                 (l_node, r_node)
             }
             NodeInner::NonLeaf { l, r, weight } => match (weight + 1).cmp(&idx) {
@@ -170,7 +206,7 @@ impl Node {
                     let (splitl, splitr) = r
                         .map(|n| n.split_offset(idx - weight))
                         .unwrap_or((None, None));
-                    (Node::merge(l.map(|n| *n), splitl), splitr)
+                    (Rope::merge(l.map(|n| *n), splitl), splitr)
                 }
                 std::cmp::Ordering::Equal => {
                     // split down the middle
@@ -179,13 +215,15 @@ impl Node {
                 std::cmp::Ordering::Greater => {
                     // all in left child
                     let (splitl, splitr) = l.map(|n| n.split_offset(idx)).unwrap_or((None, None));
-                    (splitl, Node::merge(splitr, r.map(|n| *n)))
+                    (splitl, Rope::merge(splitr, r.map(|n| *n)))
                 }
             },
-        }
+        };
+
+        dbg!(ret)
     }
 
-    fn split(self, pos: DocPos) -> (Option<Node>, Option<Node>) {
+    fn split(self, pos: DocPos) -> (Option<Rope>, Option<Rope>) {
         let off = self.doc_pos_to_offset(pos).unwrap();
         self.split_offset(off)
     }
@@ -307,10 +345,56 @@ impl Node {
     fn backward_iter(&self, _pos: DocPos) -> RopeBackwardIter {
         todo!()
     }
+
+    fn leaves(&self) -> RopeLeafIter {
+        RopeLeafIter {
+            stack: vec![self].into(),
+        }
+    }
+}
+
+struct RopeLeafIter<'a> {
+    stack: VecDeque<&'a Rope>,
+}
+
+impl<'a> Iterator for RopeLeafIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(front) = self.stack.pop_front() {
+            match &front.inner {
+                NodeInner::Leaf(s, r) => {
+                    return Some(&s.as_str()[r.clone()]);
+                }
+                NodeInner::NonLeaf { l, r, weight: _ } => {
+                    r.as_ref().map(|r| self.stack.push_front(&r));
+                    l.as_ref().map(|l| self.stack.push_front(&l));
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Display for Rope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for s in self.leaves() {
+            f.write_str(s)?;
+        }
+        Ok(())
+    }
+}
+
+impl<S: AsRef<str>> From<S> for Rope {
+    fn from(value: S) -> Self {
+        let len = value.as_ref().len();
+        Self::create_from_string(&Rc::new(value.as_ref().to_string()), 0..len)
+            .expect("creating from string succeeds")
+    }
 }
 
 pub struct RopeForwardIter<'a> {
-    stack: VecDeque<&'a Node>,
+    stack: VecDeque<&'a Rope>,
     curr: Option<Chars<'a>>,
     pos: DocPos,
 }
@@ -353,7 +437,7 @@ impl Iterator for RopeForwardIter<'_> {
 }
 
 pub struct RopeBackwardIter<'a> {
-    stack: VecDeque<&'a Node>,
+    stack: VecDeque<&'a Rope>,
     curr: Option<Rev<Chars<'a>>>,
     pos: DocPos,
 }
@@ -366,7 +450,7 @@ impl Iterator for RopeBackwardIter<'_> {
     }
 }
 
-impl Default for Node {
+impl Default for Rope {
     fn default() -> Self {
         Self::new()
     }
@@ -377,7 +461,7 @@ pub struct RopeBuffer {
     name: String,
     dirty: bool,
     path: Option<PathBuf>,
-    data: Node,
+    data: Rope,
 }
 
 impl RopeBuffer {
@@ -410,7 +494,7 @@ impl RopeBuffer {
             name,
             dirty: !s.is_empty(),
             path: None,
-            data: Node::create_from_string(&Rc::new(s), range).unwrap_or_default(),
+            data: dbg!(Rope::create_from_string(&Rc::new(s), range)).unwrap_or_default(),
         }
     }
 
@@ -454,5 +538,46 @@ impl RopeBuffer {
 
     pub fn chars_bck(&self, pos: DocPos) -> RopeBackwardIter {
         self.data.backward_iter(pos)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn empty_rope() {
+        assert_eq!(Rope::new().to_string(), "");
+    }
+
+    #[test]
+    fn nonempty_rope() {
+        assert_eq!(Rope::from("asdf").to_string(), "asdf");
+    }
+
+    #[test]
+    fn insert_into_rope_simple() {
+        assert_eq!(
+            Rope::from("abcd")
+                .insert_offset(2, "---".into())
+                .to_string(),
+            "ab---cd"
+        );
+    }
+
+    #[test]
+    fn doc_pos_to_offset_simple() {
+        assert_eq!(
+            Rope::from("asdf").doc_pos_to_offset(DocPos { x: 2, y: 0 }),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn doc_pos_to_offset_multiline() {
+        assert_eq!(
+            Rope::from("asdf\n1234\nqwer").doc_pos_to_offset(DocPos { x: 2, y: 1 }),
+            Some(7)
+        );
     }
 }
