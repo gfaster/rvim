@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::io::ErrorKind;
 use std::io::Write;
@@ -24,7 +25,6 @@ struct Rope {
     inner: NodeInner,
 }
 
-#[derive(Debug)]
 enum NodeInner {
     /// leaf node that contains a string. The actual storage is a Rc<String> and a range that
     /// denotes the characters of the string that the leaft actually contains. This sets us up for
@@ -93,7 +93,7 @@ impl Rope {
     }
 
     fn regen_weight_inner(&mut self) -> usize {
-        eprintln!("regenerating weight for {self:#?}");
+        println!("regenerating weight for {self:#?}");
         match &mut self.inner {
             NodeInner::Leaf(_, r) => r.len(),
             NodeInner::NonLeaf {
@@ -102,13 +102,7 @@ impl Rope {
                 ref mut weight,
             } => {
                 *weight = l.as_mut().map_or(0, |l| l.regen_weight_inner());
-                *weight + r.as_mut().map_or(0, |r| {
-                        if let NodeInner::NonLeaf { .. } = &r.inner {
-                            r.regen_weight_inner()
-                        } else {
-                            0
-                        }
-                    })
+                r.as_mut().map_or(0, |r| r.regen_weight_inner()) + *weight
             }
         }
     }
@@ -180,7 +174,7 @@ impl Rope {
             }),
         };
         ret.as_mut().map(Rope::regen_weight);
-        ret.as_ref().map(|n| dbg!(n).validate());
+        ret.as_ref().map(|n| n.validate());
         ret
     }
 
@@ -220,7 +214,8 @@ impl Rope {
             },
         };
 
-        dbg!(ret)
+        println!("{}: {:#?}", line!(), &ret);
+        ret
     }
 
     fn split(self, pos: DocPos) -> (Option<Rope>, Option<Rope>) {
@@ -349,6 +344,26 @@ impl Rope {
     fn leaves(&self) -> RopeLeafIter {
         RopeLeafIter {
             stack: vec![self].into(),
+        }
+    }
+}
+
+impl Debug for NodeInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeInner::Leaf(s, r) => {
+                f.debug_struct("NodeInner::Leaf")
+                    .field("content", &&s[r.clone()])
+                    .field("weight", &r.len())
+                    .finish()
+            },
+            NodeInner::NonLeaf { l, r, weight } => {
+                f.debug_struct("NodeInner::NonLeaf")
+                    .field("left", l)
+                    .field("right", r)
+                    .field("weight", weight)
+                    .finish()
+            },
         }
     }
 }
@@ -494,7 +509,7 @@ impl RopeBuffer {
             name,
             dirty: !s.is_empty(),
             path: None,
-            data: dbg!(Rope::create_from_string(&Rc::new(s), range)).unwrap_or_default(),
+            data: Rope::create_from_string(&Rc::new(s), range).unwrap_or_default(),
         }
     }
 
