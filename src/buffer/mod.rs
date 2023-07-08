@@ -127,8 +127,7 @@ pub(crate) mod test {
     }
 
     fn buffer_with_changes() -> Buffer {
-        let mut b =
-            Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
+        let mut b = Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 8, y: 12 },

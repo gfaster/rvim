@@ -119,16 +119,14 @@ impl Rope {
         };
         let lf_cnt = s[r.clone()].matches('\n').count();
         let ret = if lf_cnt >= 1 {
-            let split_idx = s[r.clone()]
-                .rfind('\n')
-                .expect("multiline string has lf");
+            let split_idx = s[r.clone()].rfind('\n').expect("multiline string has lf");
             if split_idx == r.len() - 1 {
                 Some(Self {
                     lf_cnt,
                     inner: NodeInner::Leaf(Rc::clone(s), r),
                 })
             } else {
-                assert_eq!((r.start..(r.start + split_idx + 1)).len(),split_idx + 1);
+                assert_eq!((r.start..(r.start + split_idx + 1)).len(), split_idx + 1);
                 Some(Self {
                     lf_cnt,
                     inner: NodeInner::NonLeaf {
@@ -192,9 +190,7 @@ impl Rope {
                 let r_node = Rope::create_from_string(&s, r_range);
                 (l_node, r_node)
             }
-            NodeInner::NonLeaf { l, r, weight } => match (weight + 1).cmp(&idx) {
-                // compare with weight + 1 since idx is the exclusive upper bound of the left
-                // split, and weight is the number of characters in the left child
+            NodeInner::NonLeaf { l, r, weight } => match weight.cmp(&idx) {
                 std::cmp::Ordering::Less => {
                     // all in right child
                     let (splitl, splitr) = r
@@ -239,17 +235,16 @@ impl Rope {
     }
 
     /// Find offset from DocPos.
+    ///
+    /// TODO: When the output of this is passed to functions that use the offset, they will likely
+    /// traverse the tree again. This is wasteful and should be fixed
     fn doc_pos_to_offset(&self, pos: DocPos) -> Option<usize> {
         if pos.y > self.lf_cnt {
             return None;
         };
         match &self.inner {
             NodeInner::Leaf(s, r) => {
-                let line_idx: usize = s[r.clone()]
-                    .lines()
-                    .map(str::len)
-                    .take(pos.y)
-                    .sum();
+                let line_idx: usize = s[r.clone()].lines().map(str::len).take(pos.y).sum();
                 if pos.x > s[r.clone()][line_idx..].lines().nth(0)?.len() {
                     None
                 } else {
@@ -361,15 +356,13 @@ impl Debug for Rope {
     }
 }
 
-
 impl Debug for NodeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NodeInner::Leaf(s, r) => {
-                f.debug_struct("Leaf")
-                    .field("content", &&s[r.clone()])
-                    .finish()
-            },
+            NodeInner::Leaf(s, r) => f
+                .debug_struct("Leaf")
+                .field("content", &&s[r.clone()])
+                .finish(),
             NodeInner::NonLeaf { l, r, weight: _ } => {
                 let mut d = f.debug_struct("NonLeaf");
                 match l {
@@ -383,7 +376,7 @@ impl Debug for NodeInner {
                 };
 
                 d.finish()
-            },
+            }
         }
     }
 }
@@ -622,47 +615,26 @@ mod test {
 
     #[test]
     fn insert_into_rope_repeat() {
-        let mut rope = Rope::from("abcd")
-                .insert_offset(2, "---".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab---cd"
-        );
+        let mut rope = Rope::from("abcd").insert_offset(2, "---".into());
+        assert_eq!(rope.to_string(), "ab---cd");
         rope = dbg!(rope).insert_offset(3, "+++".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab-+++--cd"
-        );
+        assert_eq!(rope.to_string(), "ab-+++--cd");
     }
 
     #[test]
     fn insert_into_rope_begin_of_insertion() {
-        let mut rope = Rope::from("abcd")
-                .insert_offset(2, "---".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab---cd"
-        );
+        let mut rope = Rope::from("abcd").insert_offset(2, "---".into());
+        assert_eq!(rope.to_string(), "ab---cd");
         rope = rope.insert_offset(2, "+++".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab+++---cd"
-        );
+        assert_eq!(rope.to_string(), "ab+++---cd");
     }
 
     #[test]
     fn insert_into_rope_end_of_insertion() {
-        let mut rope = Rope::from("abcd")
-                .insert_offset(2, "---".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab---cd"
-        );
+        let mut rope = Rope::from("abcd").insert_offset(2, "---".into());
+        assert_eq!(rope.to_string(), "ab---cd");
         rope = rope.insert_offset(5, "+++".into());
-        assert_eq!(
-            rope.to_string(),
-            "ab---+++cd"
-        );
+        assert_eq!(rope.to_string(), "ab---+++cd");
     }
 
     #[test]
@@ -676,7 +648,7 @@ mod test {
     #[test]
     fn doc_pos_to_offset_multiline() {
         assert_eq!(
-            Rope::from("asdf\n1234\nqwer").doc_pos_to_offset(DocPos { x: 2, y: 1 }),
+            dbg!(Rope::from("asdf\n1234\nqwer").doc_pos_to_offset(DocPos { x: 2, y: 1 })),
             Some(7)
         );
     }
