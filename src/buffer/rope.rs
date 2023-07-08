@@ -20,7 +20,6 @@ use super::DocRange;
 /// normal operations are done as a standard character-wise rope. However, each node stores the
 /// total number of LFs in all of its children for faster line indexing. It's important to remember
 /// that there can be more characters after the final LF.
-#[derive(Debug)]
 struct Rope {
     lf_cnt: usize,
     inner: NodeInner,
@@ -94,7 +93,7 @@ impl Rope {
     }
 
     fn regen_weight_inner(&mut self) -> usize {
-        println!("regenerating weight for {self:#?}");
+        // println!("regenerating weight for {self:#?}");
         match &mut self.inner {
             NodeInner::Leaf(_, r) => r.len(),
             NodeInner::NonLeaf {
@@ -215,7 +214,7 @@ impl Rope {
             },
         };
 
-        println!("{}: {:#?}", line!(), &ret);
+        // println!("{}: {:#?}", line!(), &ret);
         ret
     }
 
@@ -352,21 +351,38 @@ impl Rope {
     }
 }
 
+impl Debug for Rope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rope")
+            .field("lf_cnt", &self.lf_cnt)
+            .field("weight", &self.weight())
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+
 impl Debug for NodeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeInner::Leaf(s, r) => {
-                f.debug_struct("NodeInner::Leaf")
+                f.debug_struct("Leaf")
                     .field("content", &&s[r.clone()])
-                    .field("weight", &r.len())
                     .finish()
             },
-            NodeInner::NonLeaf { l, r, weight } => {
-                f.debug_struct("NodeInner::NonLeaf")
-                    .field("left", l)
-                    .field("right", r)
-                    .field("weight", weight)
-                    .finish()
+            NodeInner::NonLeaf { l, r, weight: _ } => {
+                let mut d = f.debug_struct("NonLeaf");
+                match l {
+                    Some(l) => d.field("left", l),
+                    None => d.field("left", &None::<()>),
+                };
+
+                match r {
+                    Some(r) => d.field("right", r),
+                    None => d.field("right", &None::<()>),
+                };
+
+                d.finish()
             },
         }
     }
@@ -588,7 +604,7 @@ mod test {
     fn insert_into_rope_end() {
         assert_eq!(
             Rope::from("abcd")
-                .insert_offset(0, "---".into())
+                .insert_offset(4, "---".into())
                 .to_string(),
             "abcd---"
         );
@@ -612,7 +628,7 @@ mod test {
             rope.to_string(),
             "ab---cd"
         );
-        rope = rope.insert_offset(3, "+++".into());
+        rope = dbg!(rope).insert_offset(3, "+++".into());
         assert_eq!(
             rope.to_string(),
             "ab-+++--cd"
