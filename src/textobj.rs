@@ -231,7 +231,7 @@ mod test {
 
     #[test]
     fn word_fwd_basic() {
-        let buf = Buffer::from_string("abcd efg".to_string());
+        let buf = Buffer::from_str("abcd efg");
         assert_eq!(
             do_motion_start(&buf, word_forward),
             Some(DocPos { x: 5, y: 0 })
@@ -240,7 +240,7 @@ mod test {
 
     #[test]
     fn word_fwd_short() {
-        let buf = Buffer::from_string("a bcd efg".to_string());
+        let buf = Buffer::from_str("a bcd efg");
         assert_eq!(
             do_motion_start(&buf, word_forward),
             Some(DocPos { x: 2, y: 0 })
@@ -249,7 +249,7 @@ mod test {
 
     #[test]
     fn word_fwd_newl() {
-        let buf = Buffer::from_string("abcd\nefg".to_string());
+        let buf = Buffer::from_str("abcd\nefg");
         assert_eq!(
             do_motion_start(&buf, word_forward),
             Some(DocPos { x: 0, y: 1 })
@@ -258,7 +258,7 @@ mod test {
 
     #[test]
     fn word_fwd_newl_then_space() {
-        let buf = Buffer::from_string("abcd\n    efg".to_string());
+        let buf = Buffer::from_str("abcd\n    efg");
         assert_eq!(
             do_motion_start(&buf, word_forward),
             Some(DocPos { x: 4, y: 1 })
@@ -267,7 +267,7 @@ mod test {
 
     #[test]
     fn word_fwd_end() {
-        let buf = Buffer::from_string("abcdefg".to_string());
+        let buf = Buffer::from_str("abcdefg");
         assert_eq!(
             do_motion_start(&buf, word_forward),
             Some(DocPos { x: 7, y: 0 })
@@ -276,7 +276,7 @@ mod test {
 
     #[test]
     fn word_fwd_end_at_end() {
-        let buf = Buffer::from_string("abcdefg".to_string());
+        let buf = Buffer::from_str("abcdefg");
         let mut pos = do_motion_start(&buf, word_forward);
         assert_eq!(pos, Some(DocPos { x: 7, y: 0 }));
         apply_motion(&buf, word_forward, &mut pos);
@@ -285,13 +285,13 @@ mod test {
 
     #[test]
     fn word_bck_basic() {
-        let buf = Buffer::from_string("abcd efg".to_string());
+        let buf = Buffer::from_str("abcd efg");
         assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 5, y: 0 }));
     }
 
     #[test]
     fn word_bck_short() {
-        let buf = Buffer::from_string("abcd ef g".to_string());
+        let buf = Buffer::from_str("abcd ef g");
         assert_eq!(
             word_backward(&buf, DocPos { x: 8, y: 0 }),
             Some(DocPos { x: 5, y: 0 })
@@ -300,25 +300,25 @@ mod test {
 
     #[test]
     fn word_bck_newl() {
-        let buf = Buffer::from_string("abcd\nefg\na".to_string());
+        let buf = Buffer::from_str("abcd\nefg\na");
         assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 2 }));
     }
 
     #[test]
     fn word_bck_space_then_newl() {
-        let buf = Buffer::from_string("abcd\n    efg\n    ".to_string());
+        let buf = Buffer::from_str("abcd\n    efg\n    ");
         assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 4, y: 1 }));
     }
 
     #[test]
     fn word_bck_end() {
-        let buf = Buffer::from_string("abcdefg".to_string());
+        let buf = Buffer::from_str("abcdefg");
         assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 0 }));
     }
 
     #[test]
     fn word_bck_end_at_end() {
-        let buf = Buffer::from_string("abcdefg".to_string());
+        let buf = Buffer::from_str("abcdefg");
         assert_eq!(do_motion_start(&buf, word_backward), None);
     }
 }

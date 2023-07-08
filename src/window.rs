@@ -378,7 +378,7 @@ mod test {
     use super::*;
 
     fn basic_context() -> Ctx {
-        let b = Buffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+        let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -397,7 +397,7 @@ mod test {
     }
 
     fn scroll_context() -> Ctx {
-        let b = Buffer::from_string("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast".to_string());
+        let b = Buffer::from_str("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast");
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
@@ -416,7 +416,7 @@ mod test {
     }
 
     fn blank_context() -> Ctx {
-        let b = Buffer::from_string("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line".to_string());
+        let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {

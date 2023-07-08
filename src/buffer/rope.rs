@@ -5,6 +5,7 @@ use std::fmt::Display;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::iter::Rev;
+use std::ops::Deref;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ enum NodeInner {
     /// unable to be made mutable that only copies the relevant slice.
     ///
     /// In this enum variant, the weight is just the length of the range.
-    Leaf(Rc<String>, Range<usize>),
+    Leaf(Rc<str>, Range<usize>),
 
     /// Non-leaf node. weight is the total number of bytes of the left subtree (0 if left is None)
     NonLeaf {
@@ -113,13 +114,13 @@ impl Rope {
 
     /// creates a new node from string, following the invarient of each leaf being either a part of
     /// a single line or ending with and LF. Can return None if r is empty.
-    fn create_from_string(s: &Rc<String>, r: Range<usize>) -> Option<Self> {
+    fn create_from_string(s: &Rc<str>, r: Range<usize>) -> Option<Self> {
         if r.len() == 0 {
             return None;
         };
-        let lf_cnt = s.as_str()[r.clone()].matches('\n').count();
+        let lf_cnt = s[r.clone()].matches('\n').count();
         let ret = if lf_cnt >= 1 {
-            let split_idx = s.as_str()[r.clone()]
+            let split_idx = s[r.clone()]
                 .rfind('\n')
                 .expect("multiline string has lf");
             if split_idx == r.len() - 1 {
@@ -245,12 +246,12 @@ impl Rope {
         };
         match &self.inner {
             NodeInner::Leaf(s, r) => {
-                let line_idx: usize = s.as_str()[r.clone()]
+                let line_idx: usize = s[r.clone()]
                     .lines()
                     .map(str::len)
                     .take(pos.y)
                     .sum();
-                if pos.x > s.as_str()[r.clone()][line_idx..].lines().nth(0)?.len() {
+                if pos.x > s[r.clone()][line_idx..].lines().nth(0)?.len() {
                     None
                 } else {
                     Some(line_idx + pos.x)
@@ -274,21 +275,24 @@ impl Rope {
         }
     }
 
-    fn insert_offset(self, idx: usize, s: String) -> Self {
+    /// Insert at byte offset. Uses `&str` since converting to `Rc<str>` will require reallocation
+    /// anyway
+    fn insert_offset(self, idx: usize, s: &str) -> Self {
         let (l, r) = self.split_offset(idx);
-        let range = 0..(s.as_str().len());
-        let new = Self::create_from_string(&Rc::new(s), range);
+        let range = 0..(s.len());
+        let new = Self::create_from_string(&s.into(), range);
         Self::merge(l, Self::merge(new, r)).unwrap_or_else(|| Self::default())
     }
-
-    fn insert(self, pos: DocPos, s: String) -> Self {
+    /// Insert at `DocPos`. Uses `&str` since converting to `Rc<str>` will require reallocation
+    /// anyway
+    fn insert(self, pos: DocPos, s: &str) -> Self {
         let off = self.doc_pos_to_offset(pos).unwrap();
         self.insert_offset(off, s)
     }
 
     fn insert_char(self, pos: DocPos, c: char) -> Self {
         let off = self.doc_pos_to_offset(pos).unwrap();
-        self.insert_offset(off, c.into())
+        self.insert_offset(off, &String::from(c))
     }
 
     fn delete_range_offset(self, range: Range<usize>) -> Self {
@@ -317,7 +321,7 @@ impl Rope {
             match &n.inner {
                 NodeInner::Leaf(s, r) => {
                     assert!(curr_idx + r.len() > off);
-                    ret.curr = Some(s.as_str()[r.clone()].chars());
+                    ret.curr = Some(s[r.clone()].chars());
                     if curr_idx > off {
                         ret.curr.as_mut().expect("just set").nth(off - curr_idx - 1);
                     }
@@ -379,7 +383,7 @@ impl<'a> Iterator for RopeLeafIter<'a> {
         while let Some(front) = self.stack.pop_front() {
             match &front.inner {
                 NodeInner::Leaf(s, r) => {
-                    return Some(&s.as_str()[r.clone()]);
+                    return Some(&s[r.clone()]);
                 }
                 NodeInner::NonLeaf { l, r, weight: _ } => {
                     r.as_ref().map(|r| self.stack.push_front(&r));
@@ -403,7 +407,7 @@ impl Display for Rope {
 impl<S: AsRef<str>> From<S> for Rope {
     fn from(value: S) -> Self {
         let len = value.as_ref().len();
-        Self::create_from_string(&Rc::new(value.as_ref().to_string()), 0..len)
+        Self::create_from_string(&value.as_ref().into(), 0..len)
             .expect("creating from string succeeds")
     }
 }
@@ -425,7 +429,7 @@ impl Iterator for RopeForwardIter<'_> {
                 while let Some(front) = self.stack.pop_front() {
                     match &front.inner {
                         NodeInner::Leaf(s, r) => {
-                            self.curr = Some(s.as_str()[r.clone()].chars());
+                            self.curr = Some(s[r.clone()].chars());
                             break;
                         }
                         NodeInner::NonLeaf { l, r, weight: _ } => {
@@ -490,7 +494,7 @@ impl RopeBuffer {
 
     pub fn open(file: &Path) -> Result<Self, std::io::Error> {
         let s = std::fs::read_to_string(file)?;
-        let mut res = Self::from_string(s);
+        let mut res = Self::from_str(&s);
         res.path = Some(file.canonicalize()?);
         res.name = file
             .file_name()
@@ -502,14 +506,14 @@ impl RopeBuffer {
         Ok(res)
     }
 
-    pub fn from_string(s: String) -> Self {
+    pub fn from_str(s: &str) -> Self {
         let name = "new buffer".to_string();
         let range = 0..(s.len());
         Self {
             name,
             dirty: !s.is_empty(),
             path: None,
-            data: Rope::create_from_string(&Rc::new(s), range).unwrap_or_default(),
+            data: Rope::create_from_string(&s.into(), range).unwrap_or_default(),
         }
     }
 
@@ -522,8 +526,8 @@ impl RopeBuffer {
 
     pub fn replace_range(&mut self, _ctx: &mut BufCtx, _r: DocRange, _s: &str) {}
 
-    pub fn insert_string(&mut self, ctx: &mut BufCtx, s: &str) {
-        let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s.to_string());
+    pub fn insert_str(&mut self, ctx: &mut BufCtx, s: &str) {
+        let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s);
         self.data = new;
     }
 

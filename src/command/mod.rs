@@ -45,7 +45,7 @@ impl Command for Edit {
         let mut f = OpenOptions::new().read(true).open(&self.filename)?;
         let mut v = vec![];
         f.read_to_end(&mut v)?;
-        ctx.open_buffer(Buffer::from_string(String::from_utf8(v)?));
+        ctx.open_buffer(Buffer::from_str(&String::from_utf8(v)?));
         Ok(())
     }
 }

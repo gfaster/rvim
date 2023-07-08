@@ -114,7 +114,7 @@ pub(crate) mod test {
                 .map(|l| l.len() + 1)
                 .sum::<usize>();
         buf_str.replace_range(off..off, s);
-        b.insert_string(ctx, s);
+        b.insert_str(ctx, s);
 
         out.clear();
         b.serialize(&mut out).expect("buffer will serialize");
@@ -128,7 +128,7 @@ pub(crate) mod test {
 
     fn buffer_with_changes() -> Buffer {
         let mut b =
-            Buffer::from_string(include_str!("../../assets/test/passage_wrapped.txt").to_string());
+            Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 8, y: 12 },
@@ -152,37 +152,37 @@ pub(crate) mod test {
 
     #[test]
     fn get_lines_blank() {
-        let buf = Buffer::from_string("".to_string());
+        let buf = Buffer::from_str("");
         assert_eq!(buf.get_lines(0..1), vec![""]);
     }
 
     #[test]
     fn get_lines_single() {
-        let buf = Buffer::from_string("asdf".to_string());
+        let buf = Buffer::from_str("asdf");
         assert_eq!(buf.get_lines(0..1), vec!["asdf"]);
     }
 
     #[test]
     fn get_lines_multiple() {
-        let buf = Buffer::from_string("asdf\nabcd\nefgh".to_string());
+        let buf = Buffer::from_str("asdf\nabcd\nefgh");
         assert_eq!(buf.get_lines(0..3), vec!["asdf", "abcd", "efgh"]);
     }
 
     #[test]
     fn get_lines_single_middle() {
-        let buf = Buffer::from_string("asdf\nabcd\nefgh".to_string());
+        let buf = Buffer::from_str("asdf\nabcd\nefgh");
         assert_eq!(buf.get_lines(1..2), vec!["abcd"]);
     }
 
     #[test]
     fn get_lines_multiple_middle() {
-        let buf = Buffer::from_string("asdf\nabcd\nefgh\n1234".to_string());
+        let buf = Buffer::from_str("asdf\nabcd\nefgh\n1234");
         assert_eq!(buf.get_lines(1..3), vec!["abcd", "efgh"]);
     }
 
     #[test]
     fn insert_basic() {
-        let mut buf = Buffer::from_string("".to_string());
+        let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -194,7 +194,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_blank() {
-        let mut buf = Buffer::from_string("".to_string());
+        let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -206,7 +206,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_multi() {
-        let mut buf = Buffer::from_string("".to_string());
+        let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -219,7 +219,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_newl() {
-        let mut buf = Buffer::from_string("".to_string());
+        let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -231,7 +231,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_multinewl() {
-        let mut buf = Buffer::from_string("".to_string());
+        let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -245,7 +245,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_offset() {
-        let mut buf = Buffer::from_string("0123456789".to_string());
+        let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
@@ -257,7 +257,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_offnewl() {
-        let mut buf = Buffer::from_string("0123456789".to_string());
+        let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
@@ -269,7 +269,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_prenewl() {
-        let mut buf = Buffer::from_string("0123456789".to_string());
+        let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -281,7 +281,7 @@ pub(crate) mod test {
 
     #[test]
     fn insert_multilinestr() {
-        let mut buf = Buffer::from_string("0123456789".to_string());
+        let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
             buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
@@ -294,7 +294,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsfwd_start() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -314,7 +314,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsfwd_crosslf() {
-        let buf = Buffer::from_string("01234\n56789".to_string());
+        let buf = Buffer::from_str("01234\n56789");
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -335,7 +335,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsfwd_empty() {
-        let buf = Buffer::from_string("".to_string());
+        let buf = Buffer::from_str("");
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
@@ -345,7 +345,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsfwd_eol() {
-        let buf = Buffer::from_string("01\n34".to_string());
+        let buf = Buffer::from_str("01\n34");
         let mut it = buf.chars_fwd(DocPos { x: 2, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
@@ -358,7 +358,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_empty() {
-        let buf = Buffer::from_string("".to_string());
+        let buf = Buffer::from_str("");
         let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
@@ -368,7 +368,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_eol() {
-        let buf = Buffer::from_string("01\n34".to_string());
+        let buf = Buffer::from_str("01\n34");
         let mut it = buf.chars_bck(DocPos { x: 2, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
@@ -380,7 +380,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_crosslf() {
-        let buf = Buffer::from_string("01234\n56789".to_string());
+        let buf = Buffer::from_str("01234\n56789");
         let mut it = buf.chars_bck(DocPos { x: 5, y: 1 });
 
         assert_eq!(it.next(), Some((DocPos { x: 5, y: 1 }, '\n')));
@@ -401,7 +401,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_end() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
         let mut it = buf.chars_bck(DocPos { x: 10, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 10, y: 0 }, '\n')));
@@ -421,7 +421,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_mid() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
         let mut it = buf.chars_bck(DocPos { x: 5, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '5')));
@@ -436,7 +436,7 @@ pub(crate) mod test {
 
     #[test]
     fn charsbck_start() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
         let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
 
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
@@ -446,14 +446,14 @@ pub(crate) mod test {
 
     #[test]
     fn end_blank() {
-        let buf = Buffer::from_string("".to_string());
+        let buf = Buffer::from_str("");
 
         assert_eq!(buf.end(), DocPos { x: 0, y: 0 });
     }
 
     #[test]
     fn end_simple() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
 
         assert_eq!(buf.end(), DocPos { x: 10, y: 0 });
     }
@@ -467,7 +467,7 @@ pub(crate) mod test {
 
     #[test]
     fn path_none() {
-        let buf = Buffer::from_string("0123456789".to_string());
+        let buf = Buffer::from_str("0123456789");
         assert_eq!(buf.path(), None);
     }
 }
