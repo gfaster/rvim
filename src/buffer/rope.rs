@@ -490,6 +490,7 @@ pub struct RopeBuffer {
     dirty: bool,
     path: Option<PathBuf>,
     data: Rope,
+    cache: RopeBufferCache
 }
 
 impl RopeBuffer {
@@ -523,33 +524,51 @@ impl RopeBuffer {
             dirty: !s.is_empty(),
             path: None,
             data: Rope::create_from_string(&s.into(), range).unwrap_or_default(),
+            cache: RopeBufferCache::default()
         }
     }
 
-    pub fn delete_char(&mut self, _ctx: &mut BufCtx) {}
-
-    pub fn delete_range(&mut self, r: DocRange) {
-        let new = std::mem::take(&mut self.data).delete_range(r);
-        self.data = new;
+    pub fn delete_char(&mut self, _ctx: &mut BufCtx) {
+        self.invalidate_cache();
+        todo!();
     }
 
-    pub fn replace_range(&mut self, _ctx: &mut BufCtx, _r: DocRange, _s: &str) {}
+    pub fn delete_range(&mut self, r: DocRange) {
+        self.invalidate_cache();
+        self.data = std::mem::take(&mut self.data).delete_range(r);
+    }
+
+    pub fn replace_range(&mut self, _ctx: &mut BufCtx, _r: DocRange, _s: &str) {
+        self.invalidate_cache();
+        todo!()
+    }
 
     pub fn insert_str(&mut self, ctx: &mut BufCtx, s: &str) {
+        self.invalidate_cache();
         let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s);
         self.data = new;
     }
 
-    pub fn get_off(&self, _pos: DocPos) -> usize {
+    pub fn get_off(&self, pos: DocPos) -> usize {
+        self.cache.pos_docpos(pos).unwrap_or_else(|| {
+            let off = self.data.doc_pos_to_offset(pos).unwrap();
+            self.cache.cache_pos(pos, off);
+            off
+        })
+    }
+
+    pub fn get_lines<S>(&self, _lines: Range<usize>) -> Vec<S>
+    where
+        S: AsRef<str>
+    {
         todo!()
     }
 
-    pub fn get_lines(&self, _lines: Range<usize>) -> Vec<String> {
-        todo!()
-    }
-
-    pub fn serialize<W: Write>(&self, _writer: &mut W) -> std::io::Result<()> {
-        todo!();
+    pub fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        for leaf in self.data.leaves() {
+            writer.write_all(leaf.as_bytes())?;
+        }
+        Ok(())
     }
 
     pub fn linecnt(&self) -> usize {
@@ -564,10 +583,63 @@ impl RopeBuffer {
         self.data.forward_iter(pos)
     }
 
-    pub fn chars_bck(&self, pos: DocPos) -> RopeBackwardIter {
+    pub fn chars_bck(&self, pos: DocPos) -> impl Iterator<Item = (DocPos, char)> + '_ {
         self.data.backward_iter(pos)
     }
+
+    #[inline(always)]
+    fn invalidate_cache(&self) {
+        self.cache.invalidate()
+    }
 }
+
+#[derive(Default)]
+struct RopeBufferCache {
+    linecnt: Cell<Option<usize>>,
+    endpos: Cell<Option<DocPos>>,
+
+    /// single map of a DocPos to offset
+    ///
+    /// TODO: make this work within a line or maybe leaf - need to remember width of character
+    pos: Cell<Option<(DocPos, usize)>>
+}
+
+impl RopeBufferCache {
+    fn invalidate(&self) {
+        self.linecnt.set(None);
+        self.endpos.set(None);
+        self.pos.set(None);
+    }
+
+    fn linecnt(&self) -> Option<usize> {
+        self.linecnt.get()
+    }
+
+    fn cache_linecnt(&self, linecnt: usize) {
+        self.linecnt.set(Some(linecnt))
+    }
+
+    fn endpos(&self) -> Option<DocPos> {
+        self.endpos.get()
+    }
+
+    fn cache_endpos(&self, endpos: DocPos) {
+        self.endpos.set(Some(endpos))
+    }
+
+    fn pos_docpos(&self, pos: DocPos) -> Option<usize> {
+        self.pos.get().filter(|(p, _)| p == &pos).map(|(_, i)| i)
+    }
+
+    fn pos_offset(&self, off: usize) -> Option<DocPos> {
+        self.pos.get().filter(|(_, i)| i == &off).map(|(p, _)| p)
+    }
+
+    fn cache_pos(&self, pos: DocPos, off: usize) {
+        self.pos.set(Some((pos, off)));
+    }
+}
+
 
 #[cfg(test)]
 mod test {
@@ -635,6 +707,26 @@ mod test {
         assert_eq!(rope.to_string(), "ab---cd");
         rope = rope.insert_offset(5, "+++".into());
         assert_eq!(rope.to_string(), "ab---+++cd");
+    }
+
+    #[test]
+    fn insert_lf() {
+        let rope = Rope::from("abcd").insert_offset(2, "\n".into());
+        assert_eq!(rope.to_string(), "ab\ncd");
+    }
+
+    #[test]
+    fn create_with_lf() {
+        let rope = Rope::from("ab\ncd");
+        rope.validate();
+        assert_eq!(rope.to_string(), "ab\ncd");
+    }
+
+    #[test]
+    fn create_with_multiple_lf() {
+        let rope = Rope::from("ab\nc\nasdf\nd");
+        rope.validate();
+        assert_eq!(rope.to_string(), "ab\nc\nasdf\nd");
     }
 
     #[test]
