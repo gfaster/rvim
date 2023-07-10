@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -40,17 +41,20 @@ enum NodeInner {
 
     /// Non-leaf node. weight is the total number of bytes of the left subtree (0 if left is None)
     NonLeaf {
-        l: Option<Box<Rope>>,
-        r: Option<Box<Rope>>,
+        l: Box<Rope>,
+        r: Box<Rope>,
         weight: usize,
     },
+
+    /// allows for a zero length leaf without holding on to memory
+    None
 }
 
 impl Rope {
     fn new() -> Self {
         Self {
             lf_cnt: 0,
-            inner: NodeInner::NonLeaf { l: None, r: None, weight: 0 },
+            inner: NodeInner::None
         }
     }
 
@@ -58,6 +62,7 @@ impl Rope {
         match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
             NodeInner::NonLeaf { l: _, r: _, weight } => *weight,
+            NodeInner::None => 0
         }
     }
 
@@ -65,8 +70,9 @@ impl Rope {
         match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
             NodeInner::NonLeaf { l: _, r, weight } => {
-                weight + r.as_ref().map(|n| n.total_weight()).unwrap_or(0)
-            }
+                weight + r.total_weight()
+            },
+            NodeInner::None => 0
         }
     }
 
@@ -75,127 +81,96 @@ impl Rope {
         match &self.inner {
             NodeInner::Leaf(s, r) => {
                 let true_lf_cnt = s[r.clone()].as_bytes().iter().filter(|x| **x == b'\n').count();
-                assert!(r.len() >= 1);
+                assert!(r.len() >= 1, "empty leaves should use None variant");
                 assert_eq!(true_lf_cnt, self.lf_cnt);
+                if self.lf_cnt > 0 {
+                    assert_eq!(s.as_bytes()[r.end - 1], b'\n', "leaf: {:#?} contains LF characters but does not end with one", self)
+                }
                 (r.len(), true_lf_cnt)
             }
             NodeInner::NonLeaf { l, r, weight } => {
-                let l_size = l.as_ref().map(|l| l.validate_inner()).unwrap_or((0, 0));
-                let r_size = r.as_ref().map(|r| r.validate_inner()).unwrap_or((0, 0));
+                let l_size = l.validate_inner();
+                let r_size = r.validate_inner();
                 assert_eq!(
                     l_size.0,
                     *weight,
                     "Rope: {:?}\nhas weight {} but should be {}",
-                    l.as_ref().map_or("".to_string(), |l| l.to_string()),
+                    l.to_string(),
                     weight,
                     l_size.0
                 );
                 assert_eq!(
-                    l_size.1,
-                    *weight,
-                    "Rope: {:?}\nhas lf_cnt {} but should be {}",
-                    l.as_ref().map_or("".to_string(), |l| l.to_string()),
+                    l_size.1 + r_size.1,
                     self.lf_cnt,
-                    l_size.1
+                    "Rope: {:?}\nhas lf_cnt {} but should be {}",
+                    l.to_string(),
+                    self.lf_cnt,
+                    l_size.1 + r_size.1
                 );
                 (l_size.0 + r_size.0, l_size.1 + r_size.1)
+            },
+            NodeInner::None => {
+                (0, 0)
             }
         }
     }
 
-    fn validate(&self) {
+    /// perform invariant integrity checks, returns itself so it can be chained
+    fn validate(&self) -> &Self {
         self.validate_inner();
-    }
-
-    fn regen_weight_inner(&mut self) -> usize {
-        // println!("regenerating weight for {self:#?}");
-        match &mut self.inner {
-            NodeInner::Leaf(_, r) => r.len(),
-            NodeInner::NonLeaf {
-                ref mut l,
-                ref mut r,
-                ref mut weight,
-            } => {
-                *weight = l.as_mut().map_or(0, |l| l.regen_weight_inner());
-                r.as_mut().map_or(0, |r| r.regen_weight_inner()) + *weight
-            }
-        }
-    }
-
-    fn regen_weight(&mut self) {
-        self.regen_weight_inner();
+        self
     }
 
     /// creates a new node from string, following the invarient of each leaf being either a part of
-    /// a single line or ending with and LF. Can return None if r is empty.
-    fn create_from_string(s: &Rc<str>, r: Range<usize>) -> Option<Self> {
+    fn create_from_string(s: &Rc<str>, r: Range<usize>) -> Self {
         if r.len() == 0 {
-            return None;
+            return Self::new();
         };
-        let lf_cnt = s[r.clone()].matches('\n').count();
+        assert!(r.len() <= s.len());
+        dbg!(&s[r.clone()]);
+        let lf_cnt = dbg!(s[r.clone()].as_bytes().iter().filter(|c| **c == b'\n').count());
         let ret = if lf_cnt >= 1 {
             let split_idx = s[r.clone()].rfind('\n').expect("multiline string has lf");
             if split_idx == r.len() - 1 {
-                Some(Self {
+                Self {
                     lf_cnt,
                     inner: NodeInner::Leaf(Rc::clone(s), r),
-                })
+                }
             } else {
-                assert_eq!((r.start..(r.start + split_idx + 1)).len(), split_idx + 1);
-                Some(Self {
-                    lf_cnt,
-                    inner: NodeInner::NonLeaf {
-                        l: Some(Box::new(Self {
-                            lf_cnt,
-                            inner: NodeInner::Leaf(
-                                Rc::clone(s),
-                                r.start..(r.start + split_idx + 1),
-                            ),
-                        })),
-                        r: Some(Box::new(Self {
-                            lf_cnt,
-                            inner: NodeInner::Leaf(Rc::clone(s), (r.start + split_idx + 1)..r.end),
-                        })),
-                        weight: split_idx + 1,
-                    },
-                })
+                // add 1 so LF is trailing on left child
+                let left = r.start..(r.start + split_idx + 1);
+                let right = (r.start + split_idx + 1)..r.end;
+                assert!(left.len() <= r.len());
+                assert!(right.len() <= r.len());
+                Self::merge(Self::create_from_string(s, left), Self::create_from_string(s, right))
             }
         } else {
-            Some(Self {
+            Self {
                 lf_cnt: 0,
                 inner: NodeInner::Leaf(s.clone(), r),
-            })
+            }
         };
-        ret.as_ref().map(|n| n.validate());
+        // ret.validate();
         ret
     }
 
     /// create a new node from left and right optional nodes
-    fn merge(left: Option<Self>, right: Option<Self>) -> Option<Self> {
-        let mut ret = match (left, right) {
-            (None, None) => None,
-            (None, r) => r,
-            (l, None) => l,
-            (l, r) => Some(Rope {
-                lf_cnt: l.as_ref().map_or(0, |l| l.lf_cnt) + r.as_ref().map_or(0, |r| r.lf_cnt),
-                inner: NodeInner::NonLeaf {
-                    weight: l.as_ref().map_or(0, |l| l.total_weight())
-                        + r.as_ref().map_or(0, |r| r.total_weight()),
-                    l: l.map(Box::new),
-                    r: r.map(Box::new),
-                },
-            }),
-        };
-        ret.as_mut().map(Rope::regen_weight);
-        ret.as_ref().map(|n| n.validate());
-        ret
+    fn merge(left: Self, right: Self) -> Self {
+        Rope {
+            lf_cnt: left.lf_cnt + right.lf_cnt,
+            inner: NodeInner::NonLeaf {
+                weight: left.total_weight(),
+                l: left.into(),
+                r: right.into(),
+            },
+        }
     }
 
     /// split the rope into two sub ropes. The current rope will contain characters from `0..idx` and
     /// the returned rope will contain characters in the range `idx..`
-    fn split_offset(self, idx: usize) -> (Option<Self>, Option<Self>) {
+    fn split_offset(self, idx: usize) -> (Self, Self) {
         let ret = match self.inner {
-            NodeInner::Leaf(s, range) => {
+            NodeInner::Leaf(s, range) if idx < range.len() => {
                 // left split
                 let l_range = range.start..(range.start + idx);
                 let l_node = Rope::create_from_string(&s, l_range);
@@ -205,31 +180,35 @@ impl Rope {
                 let r_node = Rope::create_from_string(&s, r_range);
                 (l_node, r_node)
             }
+            NodeInner::Leaf(_, _) => {
+                (self, Rope::new())
+            }
             NodeInner::NonLeaf { l, r, weight } => match weight.cmp(&idx) {
                 std::cmp::Ordering::Less => {
                     // all in right child
-                    let (splitl, splitr) = r
-                        .map(|n| n.split_offset(idx - weight))
-                        .unwrap_or((None, None));
-                    (Rope::merge(l.map(|n| *n), splitl), splitr)
+                    let (splitl, splitr) = r.split_offset(idx - weight);
+                    (Rope::merge(*l, splitl), splitr)
                 }
                 std::cmp::Ordering::Equal => {
                     // split down the middle
-                    (l.map(|n| *n), r.map(|n| *n))
+                    (*l, *r)
                 }
                 std::cmp::Ordering::Greater => {
                     // all in left child
-                    let (splitl, splitr) = l.map(|n| n.split_offset(idx)).unwrap_or((None, None));
-                    (splitl, Rope::merge(splitr, r.map(|n| *n)))
+                    let (splitl, splitr) = l.split_offset(idx);
+                    (splitl, Rope::merge(splitr, *r))
                 }
             },
+            NodeInner::None => {
+                (Rope::new(), Rope::new())
+            }
         };
 
         // println!("{}: {:#?}", line!(), &ret);
         ret
     }
 
-    fn split(self, pos: DocPos) -> (Option<Rope>, Option<Rope>) {
+    fn split(self, pos: DocPos) -> (Rope, Rope) {
         let off = self.doc_pos_to_offset(pos).unwrap();
         self.split_offset(off)
     }
@@ -241,16 +220,19 @@ impl Rope {
         match &self.inner {
             NodeInner::Leaf(_, _) => 0,
             NodeInner::NonLeaf { l, r, weight: _ } => {
-                r.as_ref().map_or(0, |r| r.num_trailing_chars())
-                    + r.as_ref()
-                        .filter(|r| r.lf_cnt == 0)
-                        .map_or(0, |_| l.as_ref().map_or(0, |l| l.num_trailing_chars()))
+                r.num_trailing_chars()
+                    + if r.lf_cnt == 0 {
+                    l.num_trailing_chars()
+                } else {
+                    0
+                }
             }
+            NodeInner::None => 0
         }
     }
 
     /// gets the length of line `line`, returns `None` if `line` >= number of lines
-    fn line_len(&self, line: usize) -> Option<usize> {
+    fn line_len(&self, _line: usize) -> Option<usize> {
         todo!()
     }
 
@@ -262,30 +244,38 @@ impl Rope {
         if pos.y > self.lf_cnt {
             return None;
         };
+        eprintln!("indexing {pos:?} into {:?}", self.to_string());
         match &self.inner {
             NodeInner::Leaf(s, r) => {
-                let line_idx: usize = s[r.clone()].lines().map(str::len).take(pos.y).sum();
-                if pos.x > s[r.clone()][line_idx..].lines().nth(0)?.len() {
+                let line_start_offset: usize = if pos.y > 0 {
+                    // add 1 to index to go past LF, nth(pos.y - 1) because LF marks end of line
+                    s[r.clone()].as_bytes().iter().enumerate().filter(|(_, c)| **c == b'\n').map(|(i, _)| i + 1).nth(pos.y - 1).expect("line counted LFs")
+                } else {
+                    0
+                };
+                dbg!(line_start_offset);
+                if pos.x > s[r.clone()][line_start_offset..].lines().nth(0)?.len() {
                     None
                 } else {
-                    Some(line_idx + pos.x)
+                    Some(line_start_offset + pos.x)
                 }
             }
-            NodeInner::NonLeaf { l, r, weight } => l
-                .as_ref()
-                .map(|l| l.doc_pos_to_offset(pos))
-                .flatten()
+            NodeInner::NonLeaf { l, r, weight } => 
+                l.doc_pos_to_offset(pos)
                 .or_else(|| {
-                    r.as_ref()
-                        .map(|r| {
-                            r.doc_pos_to_offset(DocPos {
-                                x: pos.x - l.as_ref().map_or(0, |l| l.num_trailing_chars()),
-                                y: pos.y - l.as_ref().map_or(0, |l| l.lf_cnt),
-                            })
-                            .map(|off| off + weight)
-                        })
-                        .flatten()
+                    r.doc_pos_to_offset(DocPos {
+                        x: pos.x - if pos.y == 0 {l.num_trailing_chars()} else {0},
+                        y: pos.y - l.lf_cnt,
+                    })
+                    .map(|off| off + weight)
                 }),
+            NodeInner::None => {
+                if pos == (DocPos {x: 0, y: 0}) {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -295,7 +285,7 @@ impl Rope {
         let (l, r) = self.split_offset(idx);
         let range = 0..(s.len());
         let new = Self::create_from_string(&s.into(), range);
-        Self::merge(l, Self::merge(new, r)).unwrap_or_else(|| Self::default())
+        Self::merge(l, Self::merge(new, r))
     }
 
     /// Insert at `DocPos`. Uses `&str` since converting to `Rc<str>` will require reallocation
@@ -312,8 +302,8 @@ impl Rope {
 
     fn delete_range_offset(self, range: Range<usize>) -> Self {
         let (l, upper) = self.split_offset(range.start);
-        let (_, r) = upper.map_or((None, None), |upper| upper.split_offset(range.end));
-        Self::merge(l, r).unwrap_or_default()
+        let (_, r) = upper.split_offset(range.end);
+        Self::merge(l, r)
     }
 
     fn delete_range(self, range: DocRange) -> Self {
@@ -343,14 +333,13 @@ impl Rope {
                     break;
                 }
                 NodeInner::NonLeaf { l, r, weight } => {
-                    r.as_ref().map(|r| ret.stack.push_front(&r));
+                    ret.stack.push_front(&r);
                     if curr_idx + weight < off {
-                        ret.stack.push_front(&l.as_ref().expect(
-                            "non-zero weight implies left child and index not more than offset",
-                        ));
+                        ret.stack.push_front(&l);
                         curr_idx += weight;
                     }
                 }
+                NodeInner::None => {()}
             }
         }
         ret
@@ -381,22 +370,20 @@ impl Debug for NodeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeInner::Leaf(s, r) => f
-                .debug_struct("Leaf")
-                .field("content", &&s[r.clone()])
+                .debug_tuple("Leaf")
+                .field(&&s[r.clone()])
                 .finish(),
             NodeInner::NonLeaf { l, r, weight: _ } => {
-                let mut d = f.debug_struct("NonLeaf");
-                match l {
-                    Some(l) => d.field("left", l),
-                    None => d.field("left", &None::<()>),
-                };
-
-                match r {
-                    Some(r) => d.field("right", r),
-                    None => d.field("right", &None::<()>),
-                };
-
-                d.finish()
+                f.debug_struct("NonLeaf")
+                    .field("left", l)
+                    .field("right", r)
+                    .finish()
+            }
+            NodeInner::None => {
+                f
+                .debug_tuple("Leaf")
+                .field(&"")
+                .finish()
             }
         }
     }
@@ -416,8 +403,11 @@ impl<'a> Iterator for RopeLeafFwdIter<'a> {
                     return Some(&s[r.clone()]);
                 }
                 NodeInner::NonLeaf { l, r, weight: _ } => {
-                    r.as_ref().map(|r| self.stack.push_front(&r));
-                    l.as_ref().map(|l| self.stack.push_front(&l));
+                    self.stack.push_front(&r);
+                    self.stack.push_front(&l);
+                }
+                NodeInner::None => {
+                    ()
                 }
             }
         }
@@ -439,9 +429,10 @@ impl<'a> Iterator for RopeLeafBckIter<'a> {
                     return Some(&s[r.clone()]);
                 }
                 NodeInner::NonLeaf { l, r, weight: _ } => {
-                    l.as_ref().map(|l| self.stack.push_front(&l));
-                    r.as_ref().map(|r| self.stack.push_front(&r));
+                    self.stack.push_front(&l);
+                    self.stack.push_front(&r);
                 }
+                NodeInner::None => ()
             }
         }
         None
@@ -461,7 +452,6 @@ impl<S: AsRef<str>> From<S> for Rope {
     fn from(value: S) -> Self {
         let len = value.as_ref().len();
         Self::create_from_string(&value.as_ref().into(), 0..len)
-            .expect("creating from string succeeds")
     }
 }
 
@@ -486,9 +476,10 @@ impl Iterator for RopeForwardIter<'_> {
                             break;
                         }
                         NodeInner::NonLeaf { l, r, weight: _ } => {
-                            r.as_ref().map(|r| self.stack.push_front(&r));
-                            l.as_ref().map(|l| self.stack.push_front(&l));
+                            self.stack.push_front(&r);
+                            self.stack.push_front(&l);
                         }
+                        NodeInner::None => ()
                     }
                 }
                 self.curr.as_mut()?.next()
@@ -529,9 +520,10 @@ impl Iterator for RopeBackwardIter<'_> {
                             break;
                         }
                         NodeInner::NonLeaf { l, r, weight: _ } => {
-                            l.as_ref().map(|l| self.stack.push_front(&l));
-                            r.as_ref().map(|r| self.stack.push_front(&r));
+                            self.stack.push_front(&l);
+                            self.stack.push_front(&r);
                         }
+                        NodeInner::None => ()
                     }
                 }
                 self.curr.as_mut()?.next()
@@ -597,7 +589,7 @@ impl RopeBuffer {
             name,
             dirty: !s.is_empty(),
             path: None,
-            data: Rope::create_from_string(&s.into(), range).unwrap_or_default(),
+            data: Rope::create_from_string(&s.into(), range),
             cache: RopeBufferCache::default()
         }
     }
@@ -631,9 +623,7 @@ impl RopeBuffer {
         })
     }
 
-    pub fn get_lines<S>(&self, _lines: Range<usize>) -> Vec<S>
-    where
-        S: AsRef<str>
+    pub fn get_lines(&self, _lines: Range<usize>) -> Vec<Cow<str>>
     {
         todo!()
     }
@@ -721,12 +711,12 @@ mod test {
 
     #[test]
     fn empty_rope() {
-        assert_eq!(Rope::new().to_string(), "");
+        assert_eq!(Rope::new().validate().to_string(), "");
     }
 
     #[test]
     fn nonempty_rope() {
-        assert_eq!(Rope::from("asdf").to_string(), "asdf");
+        assert_eq!(Rope::from("asdf").validate().to_string(), "asdf");
     }
 
     #[test]
@@ -734,6 +724,7 @@ mod test {
         assert_eq!(
             Rope::from("abcd")
                 .insert_offset(2, "---".into())
+                .validate()
                 .to_string(),
             "ab---cd"
         );
@@ -744,6 +735,7 @@ mod test {
         assert_eq!(
             Rope::from("abcd")
                 .insert_offset(4, "---".into())
+                .validate()
                 .to_string(),
             "abcd---"
         );
@@ -754,6 +746,7 @@ mod test {
         assert_eq!(
             Rope::from("abcd")
                 .insert_offset(0, "---".into())
+                .validate()
                 .to_string(),
             "---abcd"
         );
@@ -762,9 +755,9 @@ mod test {
     #[test]
     fn insert_into_rope_repeat() {
         let mut rope = Rope::from("abcd").insert_offset(2, "---".into());
-        assert_eq!(rope.to_string(), "ab---cd");
-        rope = dbg!(rope).insert_offset(3, "+++".into());
-        assert_eq!(rope.to_string(), "ab-+++--cd");
+        assert_eq!(rope.validate().to_string(), "ab---cd");
+        rope = rope.insert_offset(3, "+++".into());
+        assert_eq!(rope.validate().to_string(), "ab-+++--cd");
     }
 
     #[test]
@@ -778,15 +771,15 @@ mod test {
     #[test]
     fn insert_into_rope_end_of_insertion() {
         let mut rope = Rope::from("abcd").insert_offset(2, "---".into());
-        assert_eq!(rope.to_string(), "ab---cd");
+        assert_eq!(rope.validate().to_string(), "ab---cd");
         rope = rope.insert_offset(5, "+++".into());
-        assert_eq!(rope.to_string(), "ab---+++cd");
+        assert_eq!(rope.validate().to_string(), "ab---+++cd");
     }
 
     #[test]
     fn insert_lf() {
         let rope = Rope::from("abcd").insert_offset(2, "\n".into());
-        assert_eq!(rope.to_string(), "ab\ncd");
+        assert_eq!(rope.validate().to_string(), "ab\ncd");
     }
 
     #[test]
@@ -806,15 +799,16 @@ mod test {
     #[test]
     fn doc_pos_to_offset_simple() {
         assert_eq!(
-            Rope::from("asdf").doc_pos_to_offset(DocPos { x: 2, y: 0 }),
+            Rope::from("asdf").validate().doc_pos_to_offset(DocPos { x: 2, y: 0 }),
             Some(2)
         );
     }
 
     #[test]
     fn doc_pos_to_offset_multiline() {
+        let rope = Rope::from("asdf\n1234\nqwer"); 
         assert_eq!(
-            dbg!(Rope::from("asdf\n1234\nqwer").doc_pos_to_offset(DocPos { x: 2, y: 1 })),
+            rope.validate().doc_pos_to_offset(DocPos { x: 2, y: 1 }),
             Some(7)
         );
     }
