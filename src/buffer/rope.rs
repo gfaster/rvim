@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::fmt::Debug;
@@ -5,7 +6,6 @@ use std::fmt::Display;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::iter::Rev;
-use std::ops::Deref;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -17,10 +17,12 @@ use crate::window::BufCtx;
 
 use super::DocRange;
 
-/// normal operations are done as a standard character-wise rope. However, each node stores the
-/// total number of LFs in all of its children for faster line indexing. It's important to remember
-/// that there can be more characters after the final LF.
+/// normal operations are done as a standard character-wise rope. 
+///
+/// Remember: an LF is the end of the line, not the number of lines.
 struct Rope {
+    /// Number of LFs in both both children. We don't use the left subtree count to avoid having to
+    /// recount LFs on split
     lf_cnt: usize,
     inner: NodeInner,
 }
@@ -32,6 +34,8 @@ enum NodeInner {
     /// unable to be made mutable that only copies the relevant slice.
     ///
     /// In this enum variant, the weight is just the length of the range.
+    ///
+    /// Remember: either a leaf ends with a LF or the leaf has no LF
     Leaf(Rc<str>, Range<usize>),
 
     /// Non-leaf node. weight is the total number of bytes of the left subtree (0 if left is None)
@@ -46,7 +50,7 @@ impl Rope {
     fn new() -> Self {
         Self {
             lf_cnt: 0,
-            inner: NodeInner::Leaf(Rc::from(String::new()), 0..0),
+            inner: NodeInner::NonLeaf { l: None, r: None, weight: 0 },
         }
     }
 
@@ -66,24 +70,35 @@ impl Rope {
         }
     }
 
-    fn validate_inner(&self) -> usize {
+    /// returns (total_weight, lf_cnt)
+    fn validate_inner(&self) -> (usize, usize) {
         match &self.inner {
-            NodeInner::Leaf(_, _) => {
-                assert!(self.weight() >= 1);
-                self.weight()
+            NodeInner::Leaf(s, r) => {
+                let true_lf_cnt = s[r.clone()].as_bytes().iter().filter(|x| **x == b'\n').count();
+                assert!(r.len() >= 1);
+                assert_eq!(true_lf_cnt, self.lf_cnt);
+                (r.len(), true_lf_cnt)
             }
             NodeInner::NonLeaf { l, r, weight } => {
-                let l_size = l.as_ref().map(|l| l.validate_inner()).unwrap_or(0);
-                let r_size = r.as_ref().map(|r| r.validate_inner()).unwrap_or(0);
+                let l_size = l.as_ref().map(|l| l.validate_inner()).unwrap_or((0, 0));
+                let r_size = r.as_ref().map(|r| r.validate_inner()).unwrap_or((0, 0));
                 assert_eq!(
-                    l_size,
+                    l_size.0,
                     *weight,
                     "Rope: {:?}\nhas weight {} but should be {}",
                     l.as_ref().map_or("".to_string(), |l| l.to_string()),
                     weight,
-                    l_size
+                    l_size.0
                 );
-                l_size + r_size
+                assert_eq!(
+                    l_size.1,
+                    *weight,
+                    "Rope: {:?}\nhas lf_cnt {} but should be {}",
+                    l.as_ref().map_or("".to_string(), |l| l.to_string()),
+                    self.lf_cnt,
+                    l_size.1
+                );
+                (l_size.0 + r_size.0, l_size.1 + r_size.1)
             }
         }
     }
@@ -234,6 +249,11 @@ impl Rope {
         }
     }
 
+    /// gets the length of line `line`, returns `None` if `line` >= number of lines
+    fn line_len(&self, line: usize) -> Option<usize> {
+        todo!()
+    }
+
     /// Find offset from DocPos.
     ///
     /// TODO: When the output of this is passed to functions that use the offset, they will likely
@@ -277,6 +297,7 @@ impl Rope {
         let new = Self::create_from_string(&s.into(), range);
         Self::merge(l, Self::merge(new, r)).unwrap_or_else(|| Self::default())
     }
+
     /// Insert at `DocPos`. Uses `&str` since converting to `Rc<str>` will require reallocation
     /// anyway
     fn insert(self, pos: DocPos, s: &str) -> Self {
@@ -339,8 +360,8 @@ impl Rope {
         todo!()
     }
 
-    fn leaves(&self) -> RopeLeafIter {
-        RopeLeafIter {
+    fn leaves(&self) -> RopeLeafFwdIter {
+        RopeLeafFwdIter {
             stack: vec![self].into(),
         }
     }
@@ -381,11 +402,11 @@ impl Debug for NodeInner {
     }
 }
 
-struct RopeLeafIter<'a> {
+struct RopeLeafFwdIter<'a> {
     stack: VecDeque<&'a Rope>,
 }
 
-impl<'a> Iterator for RopeLeafIter<'a> {
+impl<'a> Iterator for RopeLeafFwdIter<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -397,6 +418,29 @@ impl<'a> Iterator for RopeLeafIter<'a> {
                 NodeInner::NonLeaf { l, r, weight: _ } => {
                     r.as_ref().map(|r| self.stack.push_front(&r));
                     l.as_ref().map(|l| self.stack.push_front(&l));
+                }
+            }
+        }
+        None
+    }
+}
+
+struct RopeLeafBckIter<'a> {
+    stack: VecDeque<&'a Rope>,
+}
+
+impl<'a> Iterator for RopeLeafBckIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(front) = self.stack.pop_front() {
+            match &front.inner {
+                NodeInner::Leaf(s, r) => {
+                    return Some(&s[r.clone()]);
+                }
+                NodeInner::NonLeaf { l, r, weight: _ } => {
+                    l.as_ref().map(|l| self.stack.push_front(&l));
+                    r.as_ref().map(|r| self.stack.push_front(&r));
                 }
             }
         }
@@ -474,7 +518,37 @@ impl Iterator for RopeBackwardIter<'_> {
     type Item = (DocPos, char);
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        let ret_c = {
+            if let Some(c) = self.curr.as_mut()?.next() {
+                Some(c)
+            } else {
+                while let Some(front) = self.stack.pop_front() {
+                    match &front.inner {
+                        NodeInner::Leaf(s, r) => {
+                            self.curr = Some(s[r.clone()].chars().rev());
+                            break;
+                        }
+                        NodeInner::NonLeaf { l, r, weight: _ } => {
+                            l.as_ref().map(|l| self.stack.push_front(&l));
+                            r.as_ref().map(|r| self.stack.push_front(&r));
+                        }
+                    }
+                }
+                self.curr.as_mut()?.next()
+            }
+        }?;
+
+        let ret_p = self.pos;
+        if ret_c == '\n' {
+            self.pos = DocPos {
+                x: 0,
+                y: self.pos.y - 1,
+            }
+        } else {
+            self.pos.x -= 1;
+        }
+        Some((ret_p, ret_c));
+        todo!();
     }
 }
 
