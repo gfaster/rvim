@@ -29,7 +29,7 @@ struct Rope {
 }
 
 enum NodeInner {
-    /// leaf node that contains a string. The actual storage is a Rc<String> and a range that
+    /// leaf node that contains a string. The actual storage is a `Rc<String>` and a range that
     /// denotes the characters of the string that the leaft actually contains. This sets us up for
     /// reducing clone calls. There is further optimization to be made here if when the string is
     /// unable to be made mutable that only copies the relevant slice.
@@ -127,7 +127,7 @@ impl Rope {
             return Self::new();
         };
         assert!(r.len() <= s.len());
-        dbg!(&s[r.clone()]);
+        // dbg!(&s[r.clone()]);
         let lf_cnt = dbg!(s[r.clone()].as_bytes().iter().filter(|c| **c == b'\n').count());
         let ret = if lf_cnt >= 1 {
             let split_idx = s[r.clone()].rfind('\n').expect("multiline string has lf");
@@ -231,8 +231,8 @@ impl Rope {
         }
     }
 
-    /// gets the length of line `line`, returns `None` if `line` >= number of lines
-    fn line_len(&self, _line: usize) -> Option<usize> {
+    /// gets the length of line `line`
+    fn line_len(&self, _line: usize) -> usize {
         todo!()
     }
 
@@ -253,7 +253,6 @@ impl Rope {
                 } else {
                     0
                 };
-                dbg!(line_start_offset);
                 if pos.x > s[r.clone()][line_start_offset..].lines().nth(0)?.len() {
                     None
                 } else {
@@ -351,6 +350,12 @@ impl Rope {
 
     fn leaves(&self) -> RopeLeafFwdIter {
         RopeLeafFwdIter {
+            stack: vec![self].into(),
+        }
+    }
+
+    fn leaves_back(&self) -> RopeLeafBckIter {
+        RopeLeafBckIter {
             stack: vec![self].into(),
         }
     }

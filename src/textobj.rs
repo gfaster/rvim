@@ -1,4 +1,4 @@
-use crate::buffer::{Buffer, DocPos, DocRange};
+use crate::prelude::*;
 
 pub enum TextObjectModifier {
     Inner,
@@ -138,7 +138,7 @@ pub mod motions {
         .category()
             != WordCat::Whitespace
         {
-            ret = *it.peek()?;
+            ret = *it.peek().expect("Checked prior");
             it.next();
         }
         Some(ret.0)
@@ -160,7 +160,7 @@ pub mod motions {
         .category()
             == init
         {
-            ret = *it.peek()?;
+            ret = *it.peek().expect("checked prior");
             it.next();
         }
         Some(ret.0)
@@ -214,6 +214,8 @@ pub fn word_object(_buf: &Buffer, _pos: DocPos) -> Option<DocRange> {
 
 #[cfg(test)]
 mod test {
+
+    use crate::buffer::Buf;
 
     use super::motions::*;
     use super::TextMotion;
@@ -286,7 +288,7 @@ mod test {
     #[test]
     fn word_bck_basic() {
         let buf = Buffer::from_str("abcd efg");
-        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 5, y: 0 }));
+        assert_eq!(word_backward(&buf, buf.last()), Some(DocPos { x: 5, y: 0 }));
     }
 
     #[test]
@@ -301,19 +303,19 @@ mod test {
     #[test]
     fn word_bck_newl() {
         let buf = Buffer::from_str("abcd\nefg\na");
-        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 2 }));
+        assert_eq!(word_backward(&buf, buf.last()), Some(DocPos { x: 0, y: 1 }));
     }
 
     #[test]
     fn word_bck_space_then_newl() {
         let buf = Buffer::from_str("abcd\n    efg\n    ");
-        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 4, y: 1 }));
+        assert_eq!(word_backward(&buf, buf.last()), Some(DocPos { x: 4, y: 1 }));
     }
 
     #[test]
     fn word_bck_end() {
         let buf = Buffer::from_str("abcdefg");
-        assert_eq!(word_backward(&buf, buf.end()), Some(DocPos { x: 0, y: 0 }));
+        assert_eq!(word_backward(&buf, buf.last()), Some(DocPos { x: 0, y: 0 }));
     }
 
     #[test]

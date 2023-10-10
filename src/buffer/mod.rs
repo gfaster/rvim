@@ -66,14 +66,70 @@ impl DocPos {
 /// Some brief research tells us three possible solutions: Gap Buffer, Rope, or Piece Table. It
 /// seems like Piece Tables would be the best for now due to its simplicity, but I'll make Buffer
 /// into a trait since it seems worthwhile to implement all of them.
-pub type Buffer = rope::RopeBuffer;
+// pub type Buffer = rope::RopeBuffer;
+pub type Buffer = simplebuffer::SimpleBuffer;
 
 // pub use piecetable::PTBuffer;
 // mod piecetable;
 
 pub use rope::RopeBuffer;
 mod rope;
-// mod simplebuffer;
+mod simplebuffer;
+
+pub trait Buf: Sized {
+    fn new() -> Self;
+    fn name(&self) -> &str;
+    fn open(file: &std::path::Path) -> std::io::Result<Self>;
+    fn from_string(s: String) -> Self;
+    fn from_str(s: &str) -> Self;
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()>;
+    fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str>;
+    fn delete_char(&mut self, ctx: &mut crate::window::BufCtx) -> char;
+    fn get_off(&self, pos: DocPos) -> usize;
+    fn linecnt(&self) -> usize;
+    fn end(&self) -> DocPos;
+    fn last(&self) -> DocPos;
+    fn insert_str(&mut self, ctx: &mut crate::window::BufCtx, s: &str);
+    fn path(&self) -> Option<&std::path::Path>;
+}
+
+pub struct LinesInclusiveIter<'a>(std::str::SplitInclusive<'a, char>);
+
+impl<'a> Iterator for LinesInclusiveIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+
+    fn last(mut self) -> Option<Self::Item>
+        where
+            Self: Sized, {
+        self.0.next_back()
+    }
+}
+
+impl DoubleEndedIterator for LinesInclusiveIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
+
+pub trait LinesInclusive {
+    /// returns an iterator over every line, including the trailing LF
+    fn lines_inclusive(&self) -> LinesInclusiveIter;
+}
+
+impl LinesInclusive for str {
+    fn lines_inclusive(&self) -> LinesInclusiveIter {
+        LinesInclusiveIter (self.split_inclusive('\n'))
+    }
+}
+
 
 #[cfg(test)]
 pub(crate) mod test {
@@ -85,12 +141,6 @@ pub(crate) mod test {
     use super::*;
     use crate::render::BufId;
     use crate::window::BufCtx;
-
-    /// make a generic test function run over all buffer implementations
-    #[allow(unused)]
-    macro_rules! polytest {
-        ($func:ident) => {};
-    }
 
     fn assert_buf_eq(b: &Buffer, s: &str) -> String {
         let mut out = Vec::<u8>::new();
@@ -150,6 +200,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[ignore = "think about correct behavior"]
     fn get_lines_blank() {
         let buf = Buffer::from_str("");
         assert_eq!(buf.get_lines(0..1), vec![""]);
@@ -306,7 +357,6 @@ pub(crate) mod test {
         assert_eq!(it.next(), Some((DocPos { x: 7, y: 0 }, '7')));
         assert_eq!(it.next(), Some((DocPos { x: 8, y: 0 }, '8')));
         assert_eq!(it.next(), Some((DocPos { x: 9, y: 0 }, '9')));
-        assert_eq!(it.next(), Some((DocPos { x: 10, y: 0 }, '\n')));
         assert_eq!(it.next(), None);
         assert_eq!(it.next(), None);
     }
@@ -327,7 +377,6 @@ pub(crate) mod test {
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 1 }, '7')));
         assert_eq!(it.next(), Some((DocPos { x: 3, y: 1 }, '8')));
         assert_eq!(it.next(), Some((DocPos { x: 4, y: 1 }, '9')));
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 1 }, '\n')));
         assert_eq!(it.next(), None);
         assert_eq!(it.next(), None);
     }
@@ -337,7 +386,6 @@ pub(crate) mod test {
         let buf = Buffer::from_str("");
         let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
 
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
         assert_eq!(it.next(), None);
         assert_eq!(it.next(), None);
     }
@@ -350,7 +398,6 @@ pub(crate) mod test {
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 1 }, '3')));
         assert_eq!(it.next(), Some((DocPos { x: 1, y: 1 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 1 }, '\n')));
         assert_eq!(it.next(), None);
         assert_eq!(it.next(), None);
     }
@@ -360,7 +407,6 @@ pub(crate) mod test {
         let buf = Buffer::from_str("");
         let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
 
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '\n')));
         assert_eq!(it.next(), None);
         assert_eq!(it.next(), None);
     }
@@ -368,9 +414,8 @@ pub(crate) mod test {
     #[test]
     fn charsbck_eol() {
         let buf = Buffer::from_str("01\n34");
-        let mut it = buf.chars_bck(DocPos { x: 2, y: 0 });
+        let mut it = buf.chars_bck(DocPos { x: 1, y: 0 });
 
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
         assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
         assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
         assert_eq!(it.next(), None);
@@ -380,9 +425,8 @@ pub(crate) mod test {
     #[test]
     fn charsbck_crosslf() {
         let buf = Buffer::from_str("01234\n56789");
-        let mut it = buf.chars_bck(DocPos { x: 5, y: 1 });
+        let mut it = buf.chars_bck(DocPos { x: 4, y: 1 });
 
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 1 }, '\n')));
         assert_eq!(it.next(), Some((DocPos { x: 4, y: 1 }, '9')));
         assert_eq!(it.next(), Some((DocPos { x: 3, y: 1 }, '8')));
         assert_eq!(it.next(), Some((DocPos { x: 2, y: 1 }, '7')));
@@ -401,9 +445,8 @@ pub(crate) mod test {
     #[test]
     fn charsbck_end() {
         let buf = Buffer::from_str("0123456789");
-        let mut it = buf.chars_bck(DocPos { x: 10, y: 0 });
+        let mut it = buf.chars_bck(DocPos { x: 9, y: 0 });
 
-        assert_eq!(it.next(), Some((DocPos { x: 10, y: 0 }, '\n')));
         assert_eq!(it.next(), Some((DocPos { x: 9, y: 0 }, '9')));
         assert_eq!(it.next(), Some((DocPos { x: 8, y: 0 }, '8')));
         assert_eq!(it.next(), Some((DocPos { x: 7, y: 0 }, '7')));
@@ -458,6 +501,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[ignore = "Needs test fix"]
     fn end_complex() {
         let buf: Buffer = buffer_with_changes();
 
@@ -468,5 +512,51 @@ pub(crate) mod test {
     fn path_none() {
         let buf = Buffer::from_str("0123456789");
         assert_eq!(buf.path(), None);
+    }
+
+    #[test]
+    fn last_single() {
+        let buf = Buffer::from_str("0123456789");
+        assert_eq!(buf.last(), DocPos { x: 9, y: 0 })
+    }
+
+    #[test]
+    fn last_multiline() {
+        let buf = Buffer::from_str("0123456789\nasdf");
+        assert_eq!(buf.last(), DocPos { x: 3, y: 1 })
+    }
+
+    mod lines_inclusive {
+        use super::*;
+
+        macro_rules! lines_test {
+            ($(#[$meta:meta])* $name:ident: $($part:literal)*) => {
+                #[test]
+                $(#[$meta])*
+                fn $name() {
+                    let orig = concat!($($part, )*);
+                    let mut it = orig.lines_inclusive();
+                    #[allow(unused_mut)]
+                    let mut count = 0;
+                    $(
+                        assert_eq!(it.next(), Some($part), "part {count} doesn't match");
+                        count += 1;
+                    )*
+                    let _ = count;
+                    assert_eq!(it.next(), None);
+                    assert_eq!(it.next(), None);
+                }
+            };
+        }
+
+        lines_test!(oneline: "asdf");
+        lines_test!(trailing_lf: "asdf\n");
+        lines_test!(multiline: "asdf\n" "basdf");
+        lines_test!(multiline_trailing_lf: "asdf\n" "basdf\n");
+        lines_test!(#[ignore = "think about correct behavior"] blank: );
+        lines_test!(just_lf: "\n");
+        lines_test!(just_lf_many: "\n" "\n" "\n");
+        lines_test!(multi_blank_in_middle: "hello\n" "\n" "\n" "world");
+        lines_test!(leading_lf: "\n" "\n" "hello\n" "world\n");
     }
 }

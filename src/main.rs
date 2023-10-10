@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 mod buffer;
 mod command;
 mod debug;
@@ -7,6 +7,8 @@ mod render;
 mod term;
 mod textobj;
 mod window;
+mod prelude;
+use prelude::*;
 
 use libc::STDIN_FILENO;
 use nix::sys::termios::{self, Termios};
