@@ -4,13 +4,12 @@ use std::{error::Error, fmt::Display, fs::OpenOptions, io::Read, path::PathBuf};
 pub mod cmdline;
 mod parser;
 
-pub trait Command {
-    fn exec(self: Box<Self>, ctx: &mut Ctx) -> Result<(), Box<dyn Error>>;
-}
 
-/// write to file
-struct Write {
-    filename: Option<PathBuf>,
+
+pub enum Command {
+    Write { path: Option<PathBuf> },
+    Edit { path: String },
+    Quit,
 }
 
 #[derive(Debug)]
@@ -22,31 +21,31 @@ impl Display for WriteCommandError {
 }
 impl Error for WriteCommandError {}
 
-impl Command for Write {
-    fn exec(self: Box<Self>, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
-        let mut f = OpenOptions::new().write(true).create(true).open(
-            self.filename
-                .as_ref()
-                .map(PathBuf::as_path)
-                .or_else(|| ctx.focused_buf().path())
-                .ok_or(Box::new(WriteCommandError))?,
-        )?;
-        ctx.focused_buf().serialize(&mut f)?;
-        Ok(())
-    }
-}
-
-/// Open a file
-struct Edit {
-    filename: PathBuf,
-}
-
-impl Command for Edit {
-    fn exec(self: Box<Self>, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
-        let mut f = OpenOptions::new().read(true).open(&self.filename)?;
-        let mut v = vec![];
-        f.read_to_end(&mut v)?;
-        ctx.open_buffer(Buffer::from_str(&String::from_utf8(v)?));
-        Ok(())
+impl Command {
+    pub fn exec(&self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
+        match self {
+            Command::Write { path } => {
+                let mut f = OpenOptions::new().write(true).create(true).open(
+                    path
+                        .as_ref()
+                        .map(PathBuf::as_path)
+                        .or_else(|| ctx.focused_buf().path())
+                        .ok_or(Box::new(WriteCommandError))?,
+                )?;
+                ctx.focused_buf().serialize(&mut f)?;
+                Ok(())
+            },
+            Command::Edit { path } => {
+                let mut f = OpenOptions::new().read(true).open(path)?;
+                let mut v = vec![];
+                f.read_to_end(&mut v)?;
+                ctx.open_buffer(Buffer::from_str(&String::from_utf8(v)?));
+                Ok(())
+            },
+            Command::Quit => {
+                crate::PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
+        }
     }
 }

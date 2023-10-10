@@ -34,7 +34,7 @@ pub enum Mode {
 }
 
 // how I handle the interrupts for now - exits on true
-static mut PENDING: AtomicBool = AtomicBool::new(false);
+static PENDING: AtomicBool = AtomicBool::new(false);
 
 // holds the original termios state to restore to when exiting
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
@@ -72,10 +72,8 @@ fn main() {
             ctx.render();
         }
 
-        unsafe {
-            if PENDING.load(std::sync::atomic::Ordering::Acquire) {
-                break;
-            }
+        if PENDING.load(std::sync::atomic::Ordering::Acquire) {
+            break;
         }
     }
 
@@ -119,7 +117,5 @@ fn panic_handler(pi: &PanicInfo) {
 extern "C" fn sa_handler(_signum: libc::c_int) {
     // this is honestly terrifying. I love it
     // std::process::Command::new("/usr/bin/reset").spawn().unwrap();
-    unsafe {
-        PENDING = true.into();
-    }
+    PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
 }

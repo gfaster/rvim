@@ -7,8 +7,10 @@ edition = "2021"
 
 [dependencies]
 enum_dispatch = "0.3.11"
+lazy-regex = "3.0.2"
 libc = "0.2.142"
 nix = "0.26.2"
+regex = "1.10.0"
 terminal_size = "0.2.5"
 textwrap = "0.16.0"
 unic-segment = "0.9.0"

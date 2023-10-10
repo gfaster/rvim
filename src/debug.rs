@@ -44,10 +44,12 @@ fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
         .unwrap();
     }
 
-    // if the file load fails, then we have no way of knowing - xfce4-terminal will display a popup
+    // if the file load fails, then we have no way of knowing - alacritty will display a popup
     // error instead of returning a failure exit code
-    let child = Command::new("xfce4-terminal")
-        .arg(format!("--command=cat {}", OUTPUT_FIFO_PATH.escape_debug()))
+    let child = Command::new("/usr/bin/alacritty")
+        .arg("--command")
+        .arg("/bin/cat")
+        .arg(OUTPUT_FIFO_PATH.escape_debug().to_string())
         .spawn()
         .unwrap();
     let file = fs::OpenOptions::new()

@@ -50,7 +50,7 @@ impl CommandLine {
         self.typ = typ;
     }
 
-    pub fn complete(&mut self) -> Option<Box<dyn Command>> {
+    pub fn complete(&mut self) -> Option<Command> {
         let out = parser::parse_command(&self.buf);
         self.clear();
         out
