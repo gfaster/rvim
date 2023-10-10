@@ -28,41 +28,28 @@ impl<'a> Lexer<'a> {
         Lexer { input: s, idx: 0 }
     }
 
-    fn next(&mut self) -> Option<Token<'a>> {
-        for kind in [TokenKind::Ident, TokenKind::Number] {
-            if let Some(tok) = self.try_next_expect(kind) {
-                return Some(tok)
-            }
-        }
-        return None
-    }
-
-    fn try_next_expect(&mut self, kind: TokenKind) -> Option<Token<'a>> {
+    fn try_next_expect(&mut self, kind: TokenKind) -> Result<Token<'a>, Range<usize>> {
         if self.idx >= self.input.len() {
-            return None;
+            return Err(self.idx..self.idx);
         }
         for (i, c) in self.input[self.idx..].char_indices() {
             if !c.is_whitespace() {
                 self.idx += i;
-            }
+                break;
+            } 
         }
-        let res = kind.regex().find(&self.input[self.idx..])?;
+        let end =
+        regex!(r#"\s"#).find(&self.input[self.idx..]).map_or(self.input.trim_end().len(), |f|
+            f.start() + self.idx);
+        let res = kind.regex().find(&self.input[self.idx..end]).ok_or(self.idx..end)?;
         let span = self.idx..(self.idx + res.range().end);
         self.idx += res.range().end;
 
-        Some(Token {
+        Ok(Token {
             data: res.as_str(),
             span,
             kind
         })
-    }
-
-    fn next_expect(&mut self, kind: TokenKind) -> Option<Token<'a>> {
-        let Some(tok) = self.try_next_expect(kind) else {
-            log!("Expected {kind}");
-            return None
-        };
-        Some(tok)
     }
 
     fn remainder(&self) -> &str {
@@ -70,20 +57,29 @@ impl<'a> Lexer<'a> {
     }
 
     fn next_expects(&mut self, kinds: &[TokenKind]) -> Option<Token<'a>> {
-        let Some(next) = self.next() else {
-            log!("Expected {} but found EOL", TokenKindList(kinds));
-            return None
-        };
-        if kinds.contains(&next.kind) {
-            return Some(next)
-        } else {
-            log!("Expected {} but found {}", TokenKindList(kinds), next.kind);
-            return None
+        for kind in kinds {
+            if let Ok(tok) = self.try_next_expect(*kind) {
+                return Some(tok);
+            }
         }
+        for kind in TokenKindList::difference(kinds) {
+            if self.try_next_expect(kind).is_ok() {
+                log!("Expected {} but found {}", TokenKindList(kinds), kind);
+                return None;
+            }
+        }
+        log!("Expected {} but found EOL", TokenKindList(kinds));
+        return None
     }
 }
 
 struct TokenKindList<'a>(&'a [TokenKind]);
+
+impl TokenKindList<'_> {
+    fn difference(remove: &[TokenKind]) -> impl IntoIterator<Item = TokenKind> + '_ {
+        [TokenKind::Ident, TokenKind::Number, TokenKind::Path].into_iter().filter(|k| !remove.contains(k))
+    }
+}
 
 impl std::fmt::Display for TokenKindList<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -125,11 +121,11 @@ pub fn parse_command(s: &str) -> Option<Command> {
     let mut args = Lexer::new(s);
     let res = match args.next_expects(&[TokenKind::Ident])?.data {
         "w" | "write" => Command::Write {
-            path: args.next_expect(TokenKind::Path).map(|p| p.data.into()),
+            path: args.next_expects(&[TokenKind::Path]).map(|p| p.data.into()),
         },
         "q" | "quit" => Command::Quit,
         "e" | "edit" => Command::Edit {
-            path: args.try_next_expect(TokenKind::Path)?.data.to_string(),
+            path: args.next_expects(&[TokenKind::Path])?.data.to_string(),
         },
         _ => return None,
     };

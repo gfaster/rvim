@@ -110,12 +110,13 @@ fn panic_handler(pi: &PanicInfo) {
 
     if let Some(payload) = pi.payload().downcast_ref::<&str>() {
         eprintln!("on: {:?}", payload);
+    } else if  let Some(payload) = pi.payload().downcast_ref::<String>() {
+        eprintln!("on: {:?}", payload);
     }
     eprint!("\n\n");
 }
 
 extern "C" fn sa_handler(_signum: libc::c_int) {
-    // this is honestly terrifying. I love it
     // std::process::Command::new("/usr/bin/reset").spawn().unwrap();
     PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
 }
