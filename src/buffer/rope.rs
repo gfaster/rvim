@@ -18,7 +18,7 @@ use crate::window::BufCtx;
 
 use super::DocRange;
 
-/// normal operations are done as a standard character-wise rope. 
+/// normal operations are done as a standard character-wise rope.
 ///
 /// Remember: an LF is the end of the line, not the number of lines.
 struct Rope {
@@ -47,14 +47,14 @@ enum NodeInner {
     },
 
     /// allows for a zero length leaf without holding on to memory
-    None
+    None,
 }
 
 impl Rope {
     fn new() -> Self {
         Self {
             lf_cnt: 0,
-            inner: NodeInner::None
+            inner: NodeInner::None,
         }
     }
 
@@ -62,17 +62,15 @@ impl Rope {
         match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
             NodeInner::NonLeaf { l: _, r: _, weight } => *weight,
-            NodeInner::None => 0
+            NodeInner::None => 0,
         }
     }
 
     fn total_weight(&self) -> usize {
         match &self.inner {
             NodeInner::Leaf(_, r) => r.len(),
-            NodeInner::NonLeaf { l: _, r, weight } => {
-                weight + r.total_weight()
-            },
-            NodeInner::None => 0
+            NodeInner::NonLeaf { l: _, r, weight } => weight + r.total_weight(),
+            NodeInner::None => 0,
         }
     }
 
@@ -80,11 +78,20 @@ impl Rope {
     fn validate_inner(&self) -> (usize, usize) {
         match &self.inner {
             NodeInner::Leaf(s, r) => {
-                let true_lf_cnt = s[r.clone()].as_bytes().iter().filter(|x| **x == b'\n').count();
+                let true_lf_cnt = s[r.clone()]
+                    .as_bytes()
+                    .iter()
+                    .filter(|x| **x == b'\n')
+                    .count();
                 assert!(r.len() >= 1, "empty leaves should use None variant");
                 assert_eq!(true_lf_cnt, self.lf_cnt);
                 if self.lf_cnt > 0 {
-                    assert_eq!(s.as_bytes()[r.end - 1], b'\n', "leaf: {:#?} contains LF characters but does not end with one", self)
+                    assert_eq!(
+                        s.as_bytes()[r.end - 1],
+                        b'\n',
+                        "leaf: {:#?} contains LF characters but does not end with one",
+                        self
+                    )
                 }
                 (r.len(), true_lf_cnt)
             }
@@ -108,10 +115,8 @@ impl Rope {
                     l_size.1 + r_size.1
                 );
                 (l_size.0 + r_size.0, l_size.1 + r_size.1)
-            },
-            NodeInner::None => {
-                (0, 0)
             }
+            NodeInner::None => (0, 0),
         }
     }
 
@@ -128,7 +133,11 @@ impl Rope {
         };
         assert!(r.len() <= s.len());
         // dbg!(&s[r.clone()]);
-        let lf_cnt = dbg!(s[r.clone()].as_bytes().iter().filter(|c| **c == b'\n').count());
+        let lf_cnt = dbg!(s[r.clone()]
+            .as_bytes()
+            .iter()
+            .filter(|c| **c == b'\n')
+            .count());
         let ret = if lf_cnt >= 1 {
             let split_idx = s[r.clone()].rfind('\n').expect("multiline string has lf");
             if split_idx == r.len() - 1 {
@@ -142,7 +151,10 @@ impl Rope {
                 let right = (r.start + split_idx + 1)..r.end;
                 assert!(left.len() <= r.len());
                 assert!(right.len() <= r.len());
-                Self::merge(Self::create_from_string(s, left), Self::create_from_string(s, right))
+                Self::merge(
+                    Self::create_from_string(s, left),
+                    Self::create_from_string(s, right),
+                )
             }
         } else {
             Self {
@@ -180,9 +192,7 @@ impl Rope {
                 let r_node = Rope::create_from_string(&s, r_range);
                 (l_node, r_node)
             }
-            NodeInner::Leaf(_, _) => {
-                (self, Rope::new())
-            }
+            NodeInner::Leaf(_, _) => (self, Rope::new()),
             NodeInner::NonLeaf { l, r, weight } => match weight.cmp(&idx) {
                 std::cmp::Ordering::Less => {
                     // all in right child
@@ -199,9 +209,7 @@ impl Rope {
                     (splitl, Rope::merge(splitr, *r))
                 }
             },
-            NodeInner::None => {
-                (Rope::new(), Rope::new())
-            }
+            NodeInner::None => (Rope::new(), Rope::new()),
         };
 
         // println!("{}: {:#?}", line!(), &ret);
@@ -222,12 +230,12 @@ impl Rope {
             NodeInner::NonLeaf { l, r, weight: _ } => {
                 r.num_trailing_chars()
                     + if r.lf_cnt == 0 {
-                    l.num_trailing_chars()
-                } else {
-                    0
-                }
+                        l.num_trailing_chars()
+                    } else {
+                        0
+                    }
             }
-            NodeInner::None => 0
+            NodeInner::None => 0,
         }
     }
 
@@ -249,7 +257,14 @@ impl Rope {
             NodeInner::Leaf(s, r) => {
                 let line_start_offset: usize = if pos.y > 0 {
                     // add 1 to index to go past LF, nth(pos.y - 1) because LF marks end of line
-                    s[r.clone()].as_bytes().iter().enumerate().filter(|(_, c)| **c == b'\n').map(|(i, _)| i + 1).nth(pos.y - 1).expect("line counted LFs")
+                    s[r.clone()]
+                        .as_bytes()
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| **c == b'\n')
+                        .map(|(i, _)| i + 1)
+                        .nth(pos.y - 1)
+                        .expect("line counted LFs")
                 } else {
                     0
                 };
@@ -259,17 +274,20 @@ impl Rope {
                     Some(line_start_offset + pos.x)
                 }
             }
-            NodeInner::NonLeaf { l, r, weight } => 
-                l.doc_pos_to_offset(pos)
-                .or_else(|| {
-                    r.doc_pos_to_offset(DocPos {
-                        x: pos.x - if pos.y == 0 {l.num_trailing_chars()} else {0},
-                        y: pos.y - l.lf_cnt,
-                    })
-                    .map(|off| off + weight)
-                }),
+            NodeInner::NonLeaf { l, r, weight } => l.doc_pos_to_offset(pos).or_else(|| {
+                r.doc_pos_to_offset(DocPos {
+                    x: pos.x
+                        - if pos.y == 0 {
+                            l.num_trailing_chars()
+                        } else {
+                            0
+                        },
+                    y: pos.y - l.lf_cnt,
+                })
+                .map(|off| off + weight)
+            }),
             NodeInner::None => {
-                if pos == (DocPos {x: 0, y: 0}) {
+                if pos == (DocPos { x: 0, y: 0 }) {
                     Some(0)
                 } else {
                     None
@@ -338,7 +356,7 @@ impl Rope {
                         curr_idx += weight;
                     }
                 }
-                NodeInner::None => {()}
+                NodeInner::None => (),
             }
         }
         ret
@@ -374,22 +392,13 @@ impl Debug for Rope {
 impl Debug for NodeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NodeInner::Leaf(s, r) => f
-                .debug_tuple("Leaf")
-                .field(&&s[r.clone()])
+            NodeInner::Leaf(s, r) => f.debug_tuple("Leaf").field(&&s[r.clone()]).finish(),
+            NodeInner::NonLeaf { l, r, weight: _ } => f
+                .debug_struct("NonLeaf")
+                .field("left", l)
+                .field("right", r)
                 .finish(),
-            NodeInner::NonLeaf { l, r, weight: _ } => {
-                f.debug_struct("NonLeaf")
-                    .field("left", l)
-                    .field("right", r)
-                    .finish()
-            }
-            NodeInner::None => {
-                f
-                .debug_tuple("Leaf")
-                .field(&"")
-                .finish()
-            }
+            NodeInner::None => f.debug_tuple("Leaf").field(&"").finish(),
         }
     }
 }
@@ -411,9 +420,7 @@ impl<'a> Iterator for RopeLeafFwdIter<'a> {
                     self.stack.push_front(&r);
                     self.stack.push_front(&l);
                 }
-                NodeInner::None => {
-                    ()
-                }
+                NodeInner::None => (),
             }
         }
         None
@@ -437,7 +444,7 @@ impl<'a> Iterator for RopeLeafBckIter<'a> {
                     self.stack.push_front(&l);
                     self.stack.push_front(&r);
                 }
-                NodeInner::None => ()
+                NodeInner::None => (),
             }
         }
         None
@@ -484,7 +491,7 @@ impl Iterator for RopeForwardIter<'_> {
                             self.stack.push_front(&r);
                             self.stack.push_front(&l);
                         }
-                        NodeInner::None => ()
+                        NodeInner::None => (),
                     }
                 }
                 self.curr.as_mut()?.next()
@@ -528,7 +535,7 @@ impl Iterator for RopeBackwardIter<'_> {
                             self.stack.push_front(&l);
                             self.stack.push_front(&r);
                         }
-                        NodeInner::None => ()
+                        NodeInner::None => (),
                     }
                 }
                 self.curr.as_mut()?.next()
@@ -561,7 +568,7 @@ pub struct RopeBuffer {
     dirty: bool,
     path: Option<PathBuf>,
     data: Rope,
-    cache: RopeBufferCache
+    cache: RopeBufferCache,
 }
 
 impl RopeBuffer {
@@ -595,7 +602,7 @@ impl RopeBuffer {
             dirty: !s.is_empty(),
             path: None,
             data: Rope::create_from_string(&s.into(), range),
-            cache: RopeBufferCache::default()
+            cache: RopeBufferCache::default(),
         }
     }
 
@@ -628,8 +635,7 @@ impl RopeBuffer {
         })
     }
 
-    pub fn get_lines(&self, _lines: Range<usize>) -> Vec<Cow<str>>
-    {
+    pub fn get_lines(&self, _lines: Range<usize>) -> Vec<Cow<str>> {
         todo!()
     }
 
@@ -670,7 +676,7 @@ struct RopeBufferCache {
     /// single map of a DocPos to offset
     ///
     /// TODO: make this work within a line or maybe leaf - need to remember width of character
-    pos: Cell<Option<(DocPos, usize)>>
+    pos: Cell<Option<(DocPos, usize)>>,
 }
 
 impl RopeBufferCache {
@@ -708,7 +714,6 @@ impl RopeBufferCache {
         self.pos.set(Some((pos, off)));
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -804,14 +809,16 @@ mod test {
     #[test]
     fn doc_pos_to_offset_simple() {
         assert_eq!(
-            Rope::from("asdf").validate().doc_pos_to_offset(DocPos { x: 2, y: 0 }),
+            Rope::from("asdf")
+                .validate()
+                .doc_pos_to_offset(DocPos { x: 2, y: 0 }),
             Some(2)
         );
     }
 
     #[test]
     fn doc_pos_to_offset_multiline() {
-        let rope = Rope::from("asdf\n1234\nqwer"); 
+        let rope = Rope::from("asdf\n1234\nqwer");
         assert_eq!(
             rope.validate().doc_pos_to_offset(DocPos { x: 2, y: 1 }),
             Some(7)

@@ -1,13 +1,13 @@
-use std::ops::Range;
 use lazy_regex::regex;
+use std::ops::Range;
 
-use crate::{prelude::*, debug::log};
+use crate::{debug::log, prelude::*};
 
-use super::Command;
+use super::{cmdline::CommandLine, Command};
 
 struct Lexer<'a> {
     input: &'a str,
-    idx: usize
+    idx: usize,
 }
 
 struct Token<'a> {
@@ -36,19 +36,22 @@ impl<'a> Lexer<'a> {
             if !c.is_whitespace() {
                 self.idx += i;
                 break;
-            } 
+            }
         }
-        let end =
-        regex!(r#"\s"#).find(&self.input[self.idx..]).map_or(self.input.trim_end().len(), |f|
-            f.start() + self.idx);
-        let res = kind.regex().find(&self.input[self.idx..end]).ok_or(self.idx..end)?;
+        let end = regex!(r#"\s"#)
+            .find(&self.input[self.idx..])
+            .map_or(self.input.trim_end().len(), |f| f.start() + self.idx);
+        let res = kind
+            .regex()
+            .find(&self.input[self.idx..end])
+            .ok_or(self.idx..end)?;
         let span = self.idx..(self.idx + res.range().end);
         self.idx += res.range().end;
 
         Ok(Token {
             data: res.as_str(),
             span,
-            kind
+            kind,
         })
     }
 
@@ -56,7 +59,7 @@ impl<'a> Lexer<'a> {
         &self.input[self.idx..]
     }
 
-    fn next_expects(&mut self, kinds: &[TokenKind]) -> Option<Token<'a>> {
+    fn next_expects(&mut self, diag: &mut CommandLine, kinds: &[TokenKind]) -> Option<Token<'a>> {
         for kind in kinds {
             if let Ok(tok) = self.try_next_expect(*kind) {
                 return Some(tok);
@@ -64,12 +67,19 @@ impl<'a> Lexer<'a> {
         }
         for kind in TokenKindList::difference(kinds) {
             if self.try_next_expect(kind).is_ok() {
-                log!("Expected {} but found {}", TokenKindList(kinds), kind);
+                diag.write_diag(format_args!(
+                    "Expected {} but found {}",
+                    TokenKindList(kinds),
+                    kind
+                ));
                 return None;
             }
         }
-        log!("Expected {} but found EOL", TokenKindList(kinds));
-        return None
+        diag.write_diag(format_args!(
+            "Expected {} but found EOL",
+            TokenKindList(kinds)
+        ));
+        return None;
     }
 }
 
@@ -77,7 +87,9 @@ struct TokenKindList<'a>(&'a [TokenKind]);
 
 impl TokenKindList<'_> {
     fn difference(remove: &[TokenKind]) -> impl IntoIterator<Item = TokenKind> + '_ {
-        [TokenKind::Ident, TokenKind::Number, TokenKind::Path].into_iter().filter(|k| !remove.contains(k))
+        [TokenKind::Ident, TokenKind::Number, TokenKind::Path]
+            .into_iter()
+            .filter(|k| !remove.contains(k))
     }
 }
 
@@ -117,17 +129,25 @@ impl std::fmt::Display for TokenKind {
     }
 }
 
-pub fn parse_command(s: &str) -> Option<Command> {
+pub fn parse_command(s: &str, diag: &mut CommandLine) -> Option<Command> {
     let mut args = Lexer::new(s);
-    let res = match args.next_expects(&[TokenKind::Ident])?.data {
+    let res = match args.next_expects(diag, &[TokenKind::Ident])?.data {
         "w" | "write" => Command::Write {
-            path: args.next_expects(&[TokenKind::Path]).map(|p| p.data.into()),
+            path: args
+                .next_expects(diag, &[TokenKind::Path])
+                .map(|p| p.data.into()),
         },
         "q" | "quit" => Command::Quit,
         "e" | "edit" => Command::Edit {
-            path: args.next_expects(&[TokenKind::Path])?.data.to_string(),
+            path: args
+                .next_expects(diag, &[TokenKind::Path])?
+                .data
+                .to_string(),
         },
-        _ => return None,
+        unknown => {
+            diag.write_diag(format_args!("Unknown command: {unknown:?}"));
+            return None;
+        }
     };
     Some(res)
 }

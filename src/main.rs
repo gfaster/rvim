@@ -3,11 +3,11 @@ mod buffer;
 mod command;
 mod debug;
 mod input;
+mod prelude;
 mod render;
 mod term;
 mod textobj;
 mod window;
-mod prelude;
 use prelude::*;
 
 use libc::STDIN_FILENO;
@@ -110,7 +110,7 @@ fn panic_handler(pi: &PanicInfo) {
 
     if let Some(payload) = pi.payload().downcast_ref::<&str>() {
         eprintln!("on: {:?}", payload);
-    } else if  let Some(payload) = pi.payload().downcast_ref::<String>() {
+    } else if let Some(payload) = pi.payload().downcast_ref::<String>() {
         eprintln!("on: {:?}", payload);
     }
     eprint!("\n\n");

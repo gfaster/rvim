@@ -1,44 +1,57 @@
-use std::{cell::{RefCell, Cell}, path::{PathBuf, Path}};
 use crate::prelude::*;
+use std::{
+    cell::{Cell, RefCell},
+    os::unix::prelude::OsStrExt,
+    path::{Path, PathBuf},
+};
 
-use super::{DocPos, Buf};
+use super::{Buf, DocPos};
 
 pub struct SimpleBuffer {
     data: String,
     path: Option<PathBuf>,
     lines: RefCell<Vec<usize>>,
-
-    outdated_lines: Cell<bool>
+    name: String,
+    outdated_lines: Cell<bool>,
 }
 
-impl super::Buf for  SimpleBuffer {
+impl super::Buf for SimpleBuffer {
     fn new() -> Self {
         Self {
             data: String::new(),
             lines: Vec::new().into(),
             outdated_lines: true.into(),
+            name: "new simple buffer".to_string(),
             path: None,
         }
     }
 
     fn name(&self) -> &str {
-        "new simple buffer"
+        &self.name
     }
 
-    fn open(file: &std::path::Path) -> std::io::Result<Self>
-    {
+    fn open(file: &std::path::Path) -> std::io::Result<Self> {
+        let name = String::from_utf8_lossy(file.file_name().map_or(b"file", |os| os.as_bytes()))
+            .to_string();
         Ok(Self {
             path: Some(file.to_owned()),
+            name,
             ..Self::from_string(std::fs::read_to_string(file)?)
         })
     }
 
     fn from_string(s: String) -> Self {
-        Self { data: s, ..Self::new()}
+        Self {
+            data: s,
+            ..Self::new()
+        }
     }
 
     fn from_str(s: &str) -> Self {
-        Self { data: s.to_string(), ..Self::new()}
+        Self {
+            data: s.to_string(),
+            ..Self::new()
+        }
     }
 
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -46,7 +59,11 @@ impl super::Buf for  SimpleBuffer {
     }
 
     fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str> {
-        self.data.lines().skip(lines.start).take(lines.len()).collect()
+        self.data
+            .lines()
+            .skip(lines.start)
+            .take(lines.len())
+            .collect()
     }
 
     fn delete_char(&mut self, ctx: &mut crate::window::BufCtx) -> char {
@@ -74,7 +91,10 @@ impl super::Buf for  SimpleBuffer {
         let linecnt = self.linecnt();
         let y = linecnt.saturating_sub(1);
         let line_nums = self.line_nums();
-        let x = *line_nums.get(y + 1).unwrap_or(&self.data.len().saturating_sub(1)) - *line_nums.get(y).unwrap_or(&0);
+        let x = *line_nums
+            .get(y + 1)
+            .unwrap_or(&self.data.len().saturating_sub(1))
+            - *line_nums.get(y).unwrap_or(&0);
 
         DocPos { x, y }
     }
@@ -92,7 +112,9 @@ impl super::Buf for  SimpleBuffer {
 // helpers
 impl SimpleBuffer {
     fn to_fileoff(&self, pos: DocPos) -> usize {
-        self.line_nums().get(pos.y).map_or(self.data.len(), |l| l + pos.x)
+        self.line_nums()
+            .get(pos.y)
+            .map_or(self.data.len(), |l| l + pos.x)
     }
 
     fn line_nums<'a>(&'a self) -> impl std::ops::Deref<Target = Vec<usize>> + 'a {
@@ -123,9 +145,12 @@ impl Iterator for SimpleBufferForwardIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.off >= self.source.data.len() {
-            return None
-        } 
-        let ret = self.source.data[self.off..].chars().next().expect("in bounds");
+            return None;
+        }
+        let ret = self.source.data[self.off..]
+            .chars()
+            .next()
+            .expect("in bounds");
         let ret_pos = self.pos;
 
         if ret == '\n' {
@@ -135,7 +160,7 @@ impl Iterator for SimpleBufferForwardIter<'_> {
             self.pos.x += ret.len_utf8();
         }
         self.off += ret.len_utf8();
-        Some ((ret_pos, ret))
+        Some((ret_pos, ret))
     }
 }
 
@@ -150,27 +175,30 @@ impl Iterator for SimpleBufferBackwardIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.off >= self.source.data.len() {
-            return None
-        } 
-        let ret = self.source.data[self.off..].chars().next().expect("in bounds");
+            return None;
+        }
+        let ret = self.source.data[self.off..]
+            .chars()
+            .next()
+            .expect("in bounds");
         let ret_pos = self.pos;
 
         if self.off == 0 {
             self.off = usize::MAX;
-            return Some ((DocPos { x: 0, y: 0 }, ret))
+            return Some((DocPos { x: 0, y: 0 }, ret));
         }
         if self.pos.x == 0 {
             let lines = self.source.line_nums();
             self.pos.x = lines[self.pos.y] - lines[self.pos.y - 1];
             self.pos.y -= 1;
-        } 
+        }
         self.off -= 1;
         self.pos.x -= 1;
         while !self.source.data.is_char_boundary(self.pos.x) {
             self.off -= 1;
             self.pos.x -= 1;
         }
-        Some ((ret_pos, ret))
+        Some((ret_pos, ret))
     }
 }
 

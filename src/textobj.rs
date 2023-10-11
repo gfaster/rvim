@@ -88,7 +88,9 @@ pub mod motions {
             .peekable();
         let mut ret = *it.peek()?;
         while {
-            let Some(x) = it.peek() else {return Some(buf.end())};
+            let Some(x) = it.peek() else {
+                return Some(buf.end());
+            };
             x
         }
         .1
@@ -110,7 +112,9 @@ pub mod motions {
         let mut ret = *it.peek()?;
         let init = ret.1.category();
         while {
-            let Some(x) = it.peek() else {return Some(buf.end())};
+            let Some(x) = it.peek() else {
+                return Some(buf.end());
+            };
             x
         }
         .1
@@ -131,7 +135,9 @@ pub mod motions {
             .peekable();
         let mut ret = *it.peek()?;
         while {
-            let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
+            let Some(x) = it.peek() else {
+                return Some(DocPos { x: 0, y: 0 });
+            };
             x
         }
         .1
@@ -153,7 +159,9 @@ pub mod motions {
         let mut ret = *it.peek()?;
         let init = ret.1.category();
         while {
-            let Some(x) = it.peek() else {return Some(DocPos { x: 0, y: 0 })};
+            let Some(x) = it.peek() else {
+                return Some(DocPos { x: 0, y: 0 });
+            };
             x
         }
         .1

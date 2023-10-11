@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::render::BufId;
+use crate::screen_write;
 use std::io::Write;
 
 use crate::buffer::Buffer;
@@ -35,6 +36,7 @@ pub struct BufCtx {
     /// translation more convienent, especially when the buffer is stored as an array of lines
     /// rather than a flat byte array (although it seems like this would slow transversal?).
     pub cursorpos: DocPos,
+    pub virtual_pos: DocPos,
     pub topline: usize,
 }
 
@@ -56,7 +58,7 @@ impl BufCtx {
                 x: basepos.x,
                 y: basepos.y + i as u32,
             });
-            print!("{:w$}", l, w = win.width() as usize);
+            screen_write!("{:w$}", l, w = win.width() as usize);
         }
     }
 
@@ -64,6 +66,7 @@ impl BufCtx {
         Self {
             buf_id: buf,
             cursorpos: DocPos { x: 0, y: 0 },
+            virtual_pos: DocPos { x: 0, y: 0 },
             topline: 0,
         }
     }
@@ -103,7 +106,7 @@ impl DispComponent for LineNumbers {
                 x: winbase.x - 4,
                 y: winbase.y,
             });
-            print!("{:4}", l as usize + win.buf_ctx.topline + 1);
+            screen_write!("{:4}", l as usize + win.buf_ctx.topline + 1);
         }
     }
 
@@ -131,14 +134,14 @@ impl DispComponent for RelLineNumbers {
             });
 
             if l == y {
-                print!(
+                screen_write!(
                     "\x1b[1;32m{: >3} \x1b[0m",
                     l as usize + win.buf_ctx.topline + 1
                 );
             } else if l as usize + win.buf_ctx.topline < linecnt {
-                print!("\x1b[1;32m{: >4}\x1b[0m", y.abs_diff(l));
+                screen_write!("\x1b[1;32m{: >4}\x1b[0m", y.abs_diff(l));
             } else {
-                print!("{: >4}", ' ');
+                screen_write!("{: >4}", ' ');
             }
         }
     }
@@ -166,7 +169,7 @@ impl DispComponent for Welcome {
                         x: 0,
                         y: top + idx as u32,
                     }));
-                    print!("{:^w$}", line, w = win.width() as usize);
+                    screen_write!("{:^w$}", line, w = win.width() as usize);
                 })
                 .last();
         }
@@ -203,15 +206,16 @@ impl DispComponent for StatusLine {
             y: base.y + 0,
         });
 
-        match ctx.mode {
-            crate::Mode::Normal => print!("\x1b[42;1;30m NORMAL \x1b[0m"),
-            crate::Mode::Insert => print!("\x1b[44;1;30m INSERT \x1b[0m"),
-            crate::Mode::Command => print!("\x1b[44;1;30m COMMAND \x1b[0m"),
-        }
-        print!(
-            "\x1b[40m {: <x$}\x1b[0m",
+        let (color, mode_str) = match ctx.mode {
+            crate::Mode::Normal => ("\x1b[42;1;30m", " NORMAL "),
+            crate::Mode::Insert => ("\x1b[44;1;30m", " INSERT "),
+            crate::Mode::Command => ("\x1b[44;1;30m", " COMMAND "),
+        };
+        screen_write!(
+            "{color}{mode_str}\x1b[0m\x1b[40m {: <x$}\x1b[0m",
             ctx.getbuf(win.buf_ctx.buf_id).unwrap().name(),
-            x = (win.width() + win.padding.left + win.padding.right - 9) as usize
+            x = (win.width() + win.padding.left + win.padding.right - mode_str.len() as u32 - 1)
+                as usize
         );
     }
 }
@@ -292,7 +296,7 @@ impl Window {
         (0..self.height())
             .map(|l| {
                 term::goto(self.reltoabs(TermPos { x: 0, y: l }));
-                print!("{}", " ".repeat(self.width() as usize));
+                screen_write!("{}", " ".repeat(self.width() as usize));
             })
             .last();
     }
@@ -327,10 +331,15 @@ impl Window {
         let line = &buf.get_lines(newy..(newy + 1))[0];
         let newx = self
             .buf_ctx
-            .cursorpos
+            .virtual_pos
             .x
             .saturating_add_signed(dx)
             .clamp(0, line.len());
+
+        if dx != 0 {
+            self.buf_ctx.virtual_pos.x = newx;
+        }
+        self.buf_ctx.virtual_pos.y = newy;
 
         self.buf_ctx.cursorpos.x = newx;
         self.buf_ctx.cursorpos.y = newy;
@@ -339,8 +348,10 @@ impl Window {
     pub fn set_pos(&mut self, buf: &Buffer, pos: DocPos) {
         let newy = pos.y.clamp(0, buf.linecnt() - 1);
         self.buf_ctx.cursorpos.y = newy;
+        self.buf_ctx.virtual_pos.y = newy;
         let line = &buf.get_lines(newy..(newy + 1))[0];
         self.buf_ctx.cursorpos.x = pos.x.clamp(0, line.len());
+        self.buf_ctx.virtual_pos.x = self.buf_ctx.cursorpos.x;
     }
 
     // pub fn insert_char<B: Buffer>(&mut self,
@@ -357,7 +368,7 @@ impl Write for Window {
         {
             amt += line.len();
             term::goto(self.reltoabs(TermPos { x: 0, y: i as u32 }));
-            print!(
+            screen_write!(
                 "{}",
                 String::from_utf8_lossy(line)
                     .unicode_truncate(self.width() as usize)
@@ -374,6 +385,79 @@ impl Write for Window {
     }
 }
 
+pub struct TextBox {
+    pub buf: String,
+    topleft: TermPos,
+    botright: TermPos,
+}
+
+impl TextBox {
+    pub fn new() -> Self {
+        let (terminal_size::Width(tw), terminal_size::Height(th)) =
+            terminal_size().unwrap_or((terminal_size::Width(80), terminal_size::Height(40)));
+        Self::new_withdim(TermPos { x: 0, y: 0 }, tw as u32, th as u32)
+    }
+
+    pub fn new_withdim(topleft: TermPos, width: u32, height: u32) -> Self {
+        Self {
+            buf: String::new(),
+            topleft: TermPos {
+                x: topleft.x,
+                y: topleft.y,
+            },
+            botright: TermPos {
+                x: width,
+                y: height,
+            },
+        }
+    }
+
+    pub fn draw(&self) -> TermPos {
+        term::rst_cur();
+        term::goto(self.topleft);
+        screen_write!("{: <width$}", self.buf, width = self.width() as usize);
+        term::flush();
+        self.botright
+    }
+
+    pub fn resize(&mut self, newx: u32, newy: u32) {
+        self.botright.x = self.topleft.x + newx;
+        self.botright.y = self.topleft.y + newy;
+    }
+
+    pub fn clamp_to_screen(&mut self) {
+        let (w, h) = terminal_size::terminal_size().unwrap();
+        let (w, h) = (w.0 as u32, h.0 as u32);
+        if self.botright.x > w {
+            let diff = self.botright.x - w;
+            let act = self.topleft.x.saturating_sub(diff);
+            self.topleft.x -= act;
+            self.botright.x -= act;
+        }
+        if self.botright.y > h {
+            let diff = self.botright.y - h;
+            let act = self.topleft.y.saturating_sub(diff);
+            self.topleft.y -= act;
+            self.botright.y -= act;
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.botright.x - self.topleft.x
+    }
+
+    pub fn height(&self) -> u32 {
+        self.botright.y - self.topleft.y
+    }
+
+    fn reltoabs(&self, pos: TermPos) -> TermPos {
+        TermPos {
+            x: pos.x + self.topleft.x,
+            y: pos.y + self.topleft.y,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -383,11 +467,7 @@ mod test {
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx {
-                buf_id: bufid,
-                cursorpos: DocPos { x: 0, y: 0 },
-                topline: 0,
-            },
+            buf_ctx: BufCtx::new(bufid),
             topleft: TermPos { x: 0, y: 0 },
             botright: TermPos { x: 7, y: 32 },
             components: vec![],
@@ -402,11 +482,7 @@ mod test {
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx {
-                buf_id: bufid,
-                cursorpos: DocPos { x: 0, y: 0 },
-                topline: 0,
-            },
+            buf_ctx: BufCtx::new(bufid),
             topleft: TermPos { x: 0, y: 0 },
             botright: TermPos { x: 7, y: 10 },
             components: vec![],
@@ -421,11 +497,7 @@ mod test {
         let mut ctx = Ctx::new_testing(b);
         let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx {
-                buf_id: bufid,
-                cursorpos: DocPos { x: 0, y: 0 },
-                topline: 0,
-            },
+            buf_ctx: BufCtx::new(bufid),
             topleft: TermPos { x: 0, y: 0 },
             botright: TermPos { x: 7, y: 32 },
             components: vec![],

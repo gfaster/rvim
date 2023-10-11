@@ -73,7 +73,7 @@ impl Ctx {
         let orig = termios.clone();
         termios::cfmakeraw(&mut termios);
         termios.local_flags.remove(LocalFlags::ECHO);
-        termios.local_flags.insert(LocalFlags::ISIG);
+        // termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId(1);
         let window = Window::new(bufid);
@@ -102,10 +102,12 @@ impl Ctx {
             Mode::Command => {
                 self.window.draw(self);
                 self.command_line.render();
+                term::flush();
             }
             _ => {
                 self.command_line.render();
                 self.window.draw(self);
+                term::flush();
             }
         }
     }

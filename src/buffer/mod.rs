@@ -107,8 +107,9 @@ impl<'a> Iterator for LinesInclusiveIter<'a> {
     }
 
     fn last(mut self) -> Option<Self::Item>
-        where
-            Self: Sized, {
+    where
+        Self: Sized,
+    {
         self.0.next_back()
     }
 }
@@ -126,10 +127,9 @@ pub trait LinesInclusive {
 
 impl LinesInclusive for str {
     fn lines_inclusive(&self) -> LinesInclusiveIter {
-        LinesInclusiveIter (self.split_inclusive('\n'))
+        LinesInclusiveIter(self.split_inclusive('\n'))
     }
 }
-
 
 #[cfg(test)]
 pub(crate) mod test {
@@ -179,9 +179,8 @@ pub(crate) mod test {
     fn buffer_with_changes() -> Buffer {
         let mut b = Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
             cursorpos: DocPos { x: 8, y: 12 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
         assert_trait_add_str(&mut b, &mut ctx, "This is some new text");
         assert_trait_add_str(&mut b, &mut ctx, "This is some more new text");
@@ -234,9 +233,7 @@ pub(crate) mod test {
     fn insert_basic() {
         let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "Hello, World");
@@ -246,9 +243,7 @@ pub(crate) mod test {
     fn insert_blank() {
         let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "");
@@ -258,9 +253,7 @@ pub(crate) mod test {
     fn insert_multi() {
         let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "Hello, ");
@@ -271,9 +264,7 @@ pub(crate) mod test {
     fn insert_newl() {
         let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
@@ -283,9 +274,7 @@ pub(crate) mod test {
     fn insert_multinewl() {
         let mut buf = Buffer::from_str("");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
@@ -297,9 +286,8 @@ pub(crate) mod test {
     fn insert_offset() {
         let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "0000000");
@@ -309,9 +297,8 @@ pub(crate) mod test {
     fn insert_offnewl() {
         let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
             cursorpos: DocPos { x: 5, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
@@ -321,9 +308,8 @@ pub(crate) mod test {
     fn insert_prenewl() {
         let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
             cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "\n");
@@ -333,9 +319,7 @@ pub(crate) mod test {
     fn insert_multilinestr() {
         let mut buf = Buffer::from_str("0123456789");
         let mut ctx = BufCtx {
-            buf_id: BufId::new(),
-            cursorpos: DocPos { x: 0, y: 0 },
-            topline: 0,
+            ..BufCtx::new(BufId::new())
         };
 
         assert_trait_add_str(&mut buf, &mut ctx, "asdf\nzdq\nqwrpi\nmnbv\n");

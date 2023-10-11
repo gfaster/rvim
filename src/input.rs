@@ -125,10 +125,7 @@ fn handle_motion_or_textobj(a: Accepting, c: char) -> Option<Accepting> {
     }
 }
 
-fn state_machine_step<T>(a: Accepting, reader: &mut T) -> Option<Accepting>
-where
-    T: Read,
-{
+fn state_machine_step(a: Accepting, reader: &mut impl Read) -> Option<Accepting> {
     let c = reader
         .bytes()
         .map(|b| char::from(b.expect("cannot read char")))

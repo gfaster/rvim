@@ -1,4 +1,10 @@
-use std::io::{self, Write};
+use std::cell::RefCell;
+use std::fmt::Write;
+use std::{io::stdout, sync::Mutex};
+
+thread_local! {
+    static SCREEN: RefCell<Screen> =  const { RefCell::new(Screen { buf: String::new() }) };
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TermPos {
@@ -16,22 +22,49 @@ impl TermPos {
     }
 }
 
+pub struct Screen {
+    buf: String,
+}
+
+impl Screen {
+    pub fn write(args: std::fmt::Arguments) {
+        SCREEN.with(|s| {
+            s.borrow_mut()
+                .buf
+                .write_fmt(args)
+                .expect("can write to string")
+        })
+    }
+}
+
+#[macro_export]
+macro_rules! screen_write {
+    ($($tt:tt)*) => {
+        $crate::term::Screen::write(format_args!($($tt)*))
+    };
+}
+
 pub fn rst_cur() {
-    print!("\x1b[1;1H");
+    screen_write!("\x1b[1;1H");
 }
 
 pub fn altbuf_enable() {
-    print!("\x1b[?1049h");
+    screen_write!("\x1b[?1049h");
 }
 
 pub fn altbuf_disable() {
-    print!("\x1b[?1049l");
+    screen_write!("\x1b[?1049l");
 }
 
 pub fn goto(pos: TermPos) {
-    print!("\x1b[{};{}H", pos.row(), pos.col());
+    screen_write!("\x1b[{};{}H", pos.row(), pos.col());
 }
 
 pub fn flush() {
-    io::stdout().flush().unwrap();
+    SCREEN.with(|s| {
+        let mut s = s.borrow_mut();
+        print!("{}", s.buf);
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        s.buf.clear();
+    })
 }
