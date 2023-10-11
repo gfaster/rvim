@@ -41,7 +41,15 @@ impl CommandLine {
                     CommandType::None => ' ',
                     CommandType::Find => '/',
                 };
-                screen_write!("\x1b[0m{lead}{:width$}", self.buf, width = w.0 as usize - 1);
+                screen_write!(
+                    "\x1b[0m{lead}{: <width$}",
+                    self.buf,
+                    width = w.0 as usize - 1
+                );
+                term::goto(term::TermPos {
+                    x: self.buf.len() as u32 + 1,
+                    y: h.0 as u32 - 1,
+                });
             }
             CommandLineMode::Output => {
                 let Some(ref text) = self.output else { return };

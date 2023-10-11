@@ -34,6 +34,18 @@ pub struct Action {
     pub motion: Option<Motion>,
     pub operation: Operation,
     pub repeat: Option<u32>,
+    pub post_motion: Option<Motion>,
+}
+
+impl Action {
+    pub const fn new() -> Self {
+        Action {
+            motion: None,
+            operation: Operation::None,
+            repeat: None,
+            post_motion: None,
+        }
+    }
 }
 
 pub fn handle_input(ctx: &Ctx) -> Option<Action> {
@@ -49,20 +61,19 @@ pub fn handle_input(ctx: &Ctx) -> Option<Action> {
             match c {
                 '\x1b' => Action {
                     // escape key, this needs to be more sophisticated for pasting
-                    motion: None,
                     operation: Operation::SwitchMode(Mode::Normal),
-                    repeat: None,
+                    ..Action::new()
                 },
                 '\x7f' | '\x08' => Action {
                     // delete/backspace keys
                     motion: None,
                     operation: Operation::Delete,
-                    repeat: None,
+                    ..Action::new()
                 },
                 _ => Action {
                     motion: None,
                     operation: Operation::Insert(c.to_string()),
-                    repeat: None,
+                    ..Action::new()
                 },
             }
         }),
@@ -93,7 +104,7 @@ fn handle_textobj(a: Accepting, c: char) -> Option<Accepting> {
             'w' => Some(Accepting::Complete(Action {
                 motion: Some(Motion::TextObj(word_object)),
                 operation: op,
-                repeat: None,
+                ..Action::new()
             })),
             _ => None,
         },
@@ -108,7 +119,7 @@ fn handle_motion_or_textobj(a: Accepting, c: char) -> Option<Accepting> {
                 Some(Accepting::Complete(Action {
                     motion: handle_motion(c),
                     operation: op,
-                    repeat: None,
+                    ..Action::new()
                 }))
             }
             'i' => Some(Accepting::TextObject {
@@ -144,29 +155,26 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
         'h' | 'j' | 'k' | 'l' | 'w' | 'W' | '0' | '$' | 'b' | 'B' | 'e' | 'E' => {
             Some(Accepting::Complete(Action {
                 motion: handle_motion(c),
-                operation: Operation::None,
-                repeat: None,
+                ..Action::new()
             }))
         }
         'a' => Some(Accepting::Complete(Action {
             motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
             operation: Operation::SwitchMode(Mode::Insert),
-            repeat: None,
+            ..Action::new()
         })),
         'i' => Some(Accepting::Complete(Action {
-            motion: None,
             operation: Operation::SwitchMode(Mode::Insert),
-            repeat: None,
+            ..Action::new()
         })),
         ':' => Some(Accepting::Complete(Action {
-            motion: None,
             operation: Operation::SwitchMode(Mode::Command),
-            repeat: None,
+            ..Action::new()
         })),
         'x' => Some(Accepting::Complete(Action {
-            motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
             operation: Operation::Delete,
-            repeat: None,
+            post_motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
+            ..Action::new()
         })),
         'd' => Some(Accepting::MotionOrTextObj {
             op: Operation::Delete,
@@ -177,7 +185,7 @@ fn handle_normal_input(c: char) -> Option<Accepting> {
         'p' => Some(Accepting::Complete(Action {
             motion: None,
             operation: Operation::Debug,
-            repeat: None,
+            ..Action::new()
         })),
         _ => None,
     }

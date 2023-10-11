@@ -25,8 +25,6 @@ static OUTPUT: Mutex<Option<LogComponents>> = Mutex::new(None);
 const OUTPUT_FIFO_PATH: &str = "/tmp/rvim_log.fifo";
 
 fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
-    // this feels like it should be unsafe, but apparently getting a lock on a static mutex is just
-    // fine
     let mut guard = OUTPUT.lock().unwrap();
     if guard.is_some() {
         assert!(fs::metadata(OUTPUT_FIFO_PATH)
@@ -67,7 +65,7 @@ fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
 }
 
 pub fn is_init() -> bool {
-    OUTPUT.lock().map(|x| x.is_some()).unwrap_or(false)
+    OUTPUT.try_lock().ok().map(|x| x.is_some()).unwrap_or(false)
 }
 
 pub fn cleanup() {
@@ -93,5 +91,6 @@ pub fn log_args(args: fmt::Arguments) {
         .expect("log initialized")
         .file
         .write_fmt(args)
-        .expect("write succeeds");
+        // .expect("write succeeds")
+        .unwrap_or(());
 }

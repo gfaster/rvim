@@ -6,7 +6,7 @@ mod parser;
 
 pub enum Command {
     Write { path: Option<PathBuf> },
-    Edit { path: String },
+    Edit { path: PathBuf },
     Quit,
 }
 
@@ -33,10 +33,7 @@ impl Command {
                 Ok(())
             }
             Command::Edit { path } => {
-                let mut f = OpenOptions::new().read(true).open(path)?;
-                let mut v = vec![];
-                f.read_to_end(&mut v)?;
-                ctx.open_buffer(Buffer::from_str(&String::from_utf8(v)?));
+                ctx.open_buffer(Buffer::open(path)?);
                 Ok(())
             }
             Command::Quit => {

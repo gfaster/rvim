@@ -134,15 +134,13 @@ pub fn parse_command(s: &str, diag: &mut CommandLine) -> Option<Command> {
     let res = match args.next_expects(diag, &[TokenKind::Ident])?.data {
         "w" | "write" => Command::Write {
             path: args
-                .next_expects(diag, &[TokenKind::Path])
+                .try_next_expect(TokenKind::Path)
+                .ok()
                 .map(|p| p.data.into()),
         },
         "q" | "quit" => Command::Quit,
         "e" | "edit" => Command::Edit {
-            path: args
-                .next_expects(diag, &[TokenKind::Path])?
-                .data
-                .to_string(),
+            path: args.next_expects(diag, &[TokenKind::Path])?.data.into(),
         },
         unknown => {
             diag.write_diag(format_args!("Unknown command: {unknown:?}"));

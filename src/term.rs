@@ -48,6 +48,10 @@ pub fn rst_cur() {
     screen_write!("\x1b[1;1H");
 }
 
+pub fn default_style() {
+    screen_write!("\x1b[0m");
+}
+
 pub fn altbuf_enable() {
     screen_write!("\x1b[?1049h");
 }

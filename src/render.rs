@@ -2,6 +2,7 @@ use crate::command::cmdline::CommandLine;
 use crate::command::cmdline::CommandLineInput;
 use crate::debug::log;
 use crate::input::Action;
+use crate::screen_write;
 use crate::textobj::Motion;
 
 use crate::term;
@@ -34,11 +35,17 @@ pub struct Ctx {
     id_counter: usize,
     buffers: std::collections::BTreeMap<BufId, Buffer>,
     termios: Termios,
-    orig: Termios,
+    orig_termios: Termios,
     command_line: CommandLine,
+    /// terminal size (w, h)
+    termsize: (u32, u32),
     pub term: RawFd,
     pub window: Window,
     pub mode: Mode,
+}
+
+fn get_termsize() -> (u32, u32) {
+    terminal_size::terminal_size().map_or((80, 40), |(w, h)| (w.0 as u32, h.0 as u32))
 }
 
 #[cfg(test)]
@@ -52,7 +59,8 @@ impl Ctx {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
             termios: termios.clone(),
-            orig: termios,
+            orig_termios: termios,
+            termsize: (80, 40),
             term,
             mode: Mode::Normal,
             window,
@@ -81,8 +89,9 @@ impl Ctx {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
             termios,
-            orig,
+            orig_termios: orig,
             term,
+            termsize: get_termsize(),
             mode: Mode::Normal,
             window,
             command_line: Default::default(),
@@ -97,7 +106,20 @@ impl Ctx {
         self.buffers.get(&buf)
     }
 
-    pub fn render(&self) {
+    pub fn render(&mut self) {
+        let currsize = get_termsize();
+        if currsize != self.termsize {
+            self.window.clear();
+            self.window.set_size_padded(currsize.0, currsize.1);
+            self.termsize = currsize;
+            term::rst_cur();
+            // clear the screen
+            screen_write!(
+                "{:>w$}",
+                "",
+                w = (self.termsize.0 * self.termsize.1) as usize
+            );
+        }
         match self.mode {
             Mode::Command => {
                 self.window.draw(self);
@@ -130,32 +152,47 @@ impl Ctx {
         self.window.clear();
     }
 
-    pub fn process_action(&mut self, action: Action) {
-        if let Some(m) = action.motion {
-            match m {
-                Motion::ScreenSpace { dy, dx } => {
-                    // type system here is kinda sneaky, can't use getbuf because all of self is
-                    // borrowed
-                    let buf = &self.buffers[&self.focused()];
-                    self.window.move_cursor(buf, dx, dy)
-                }
-                Motion::BufferSpace { doff: _ } => todo!(),
-                Motion::TextObj(_) => todo!(),
-                Motion::TextMotion(m) => {
-                    let buf = &self.buffers[&self.focused()];
-                    let buf_ctx = &mut self.window.buf_ctx;
-                    if let Some(newpos) = m(buf, buf_ctx.cursorpos) {
-                        self.window.set_pos(buf, newpos);
-                    }
+    pub fn diag(&mut self, args: std::fmt::Arguments) {
+        self.command_line.write_diag(args)
+    }
+
+    pub fn err(&mut self, err: &(impl std::error::Error + ?Sized)) {
+        self.command_line.write_diag(format_args!("Error: {}", err))
+    }
+
+    fn apply_motion(&mut self, motion: Motion) {
+        match motion {
+            Motion::ScreenSpace { dy, dx } => {
+                // type system here is kinda sneaky, can't use getbuf because all of self is
+                // borrowed
+                let buf = &self.buffers[&self.focused()];
+                self.window.move_cursor(buf, dx, dy)
+            }
+            Motion::BufferSpace { doff: _ } => todo!(),
+            Motion::TextObj(_) => todo!(),
+            Motion::TextMotion(m) => {
+                let buf = &self.buffers[&self.focused()];
+                let buf_ctx = &mut self.window.buf_ctx;
+                if let Some(newpos) = m(buf, buf_ctx.cursorpos) {
+                    self.window.set_pos(buf, newpos);
                 }
             }
+        }
+    }
+
+    pub fn process_action(&mut self, action: Action) {
+        if let Some(m) = action.motion {
+            self.apply_motion(m)
         }
         match self.mode {
             Mode::Command => match action.operation {
                 crate::input::Operation::Insert(s) => {
                     let c = s.chars().next().unwrap();
                     if c == '\r' {
-                        self.command_line.complete().map(|x| x.exec(self));
+                        self.command_line
+                            .complete()
+                            .map(|x| x.exec(self))
+                            .map(|r| r.map_err(|e| self.err(&*e)));
                         self.mode = Mode::Normal;
                     } else {
                         self.command_line.input(CommandLineInput::Append(c));
@@ -164,7 +201,12 @@ impl Ctx {
                 crate::input::Operation::Delete => {
                     self.command_line.input(CommandLineInput::Delete)
                 }
-                crate::input::Operation::SwitchMode(m) => self.mode = m,
+                crate::input::Operation::SwitchMode(m) => {
+                    if !matches!(m, Mode::Command) {
+                        self.command_line.clear();
+                    }
+                    self.mode = m
+                }
                 crate::input::Operation::Debug => todo!(),
                 crate::input::Operation::None => (),
                 _ => unreachable!(),
@@ -203,12 +245,15 @@ impl Ctx {
                     log!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
                 }
             },
+        };
+        if let Some(m) = action.post_motion {
+            self.apply_motion(m)
         }
     }
 }
 
 impl Drop for Ctx {
     fn drop(&mut self) {
-        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig).unwrap_or(());
+        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig_termios).unwrap_or(());
     }
 }

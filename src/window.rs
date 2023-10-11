@@ -1,3 +1,4 @@
+use crate::debug::log;
 use crate::prelude::*;
 use crate::render::BufId;
 use crate::screen_write;
@@ -42,7 +43,11 @@ pub struct BufCtx {
 
 impl BufCtx {
     pub fn win_pos(&self, _win: &Window) -> TermPos {
-        let y = (self.cursorpos.y - self.topline) as u32;
+        let y = self
+            .cursorpos
+            .y
+            .checked_sub(self.topline)
+            .expect("tried to move cursor above window") as u32;
         let x = self.cursorpos.x as u32;
         TermPos { x, y }
     }
@@ -214,8 +219,9 @@ impl DispComponent for StatusLine {
         screen_write!(
             "{color}{mode_str}\x1b[0m\x1b[40m {: <x$}\x1b[0m",
             ctx.getbuf(win.buf_ctx.buf_id).unwrap().name(),
-            x = (win.width() + win.padding.left + win.padding.right - mode_str.len() as u32 - 1)
+            x = (win.width() + win.padding.left + win.padding.right - mode_str.len() as u32)
                 as usize
+                - 1
         );
     }
 }
@@ -279,9 +285,17 @@ impl Window {
         }
     }
 
-    pub fn resize(&mut self, dx: i32, dy: i32) {
-        self.botright.y = self.botright.y.checked_add_signed(dy).unwrap();
-        self.botright.x = self.botright.x.checked_add_signed(dx).unwrap();
+    /// probably don't want to use this since it erases padding
+    pub fn set_size(&mut self, newx: u32, newy: u32) {
+        self.botright.x = self.topleft.x + newx;
+        self.botright.y = self.topleft.y + newy;
+    }
+
+    pub fn set_size_padded(&mut self, newx: u32, newy: u32) {
+        let newx = newx - self.padding.left - self.padding.right;
+        let newy = newy - self.padding.top - self.padding.bottom;
+        self.botright.x = self.topleft.x + newx;
+        self.botright.y = self.topleft.y + newy;
     }
 
     pub fn width(&self) -> u32 {
@@ -296,7 +310,7 @@ impl Window {
         (0..self.height())
             .map(|l| {
                 term::goto(self.reltoabs(TermPos { x: 0, y: l }));
-                screen_write!("{}", " ".repeat(self.width() as usize));
+                screen_write!("{: >w$}", "", w = self.width() as usize);
             })
             .last();
     }
@@ -309,25 +323,25 @@ impl Window {
     }
 
     pub fn draw(&self, ctx: &Ctx) {
+        // log!("height: {}", self.height());
         term::rst_cur();
         self.buf_ctx.draw(self, ctx);
         self.components.iter().map(|x| x.draw(self, ctx)).last();
         term::goto(self.reltoabs(self.buf_ctx.win_pos(self)));
-        term::flush();
     }
 
     pub fn cursorpos(&self) -> TermPos {
+        // log!("calling cursorpos from {:}", std::panic::Location::caller());
         self.buf_ctx.win_pos(self)
     }
 
-    /// Move the cursor
     pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
         let newy = self
             .buf_ctx
             .cursorpos
             .y
             .saturating_add_signed(dy)
-            .clamp(0, buf.linecnt());
+            .clamp(0, buf.linecnt().saturating_sub(1));
         let line = &buf.get_lines(newy..(newy + 1))[0];
         let newx = self
             .buf_ctx
@@ -343,15 +357,29 @@ impl Window {
 
         self.buf_ctx.cursorpos.x = newx;
         self.buf_ctx.cursorpos.y = newy;
+        self.fit_ctx_frame();
     }
 
     pub fn set_pos(&mut self, buf: &Buffer, pos: DocPos) {
-        let newy = pos.y.clamp(0, buf.linecnt() - 1);
+        let newy = pos.y.clamp(0, buf.linecnt().saturating_sub(1));
         self.buf_ctx.cursorpos.y = newy;
         self.buf_ctx.virtual_pos.y = newy;
         let line = &buf.get_lines(newy..(newy + 1))[0];
         self.buf_ctx.cursorpos.x = pos.x.clamp(0, line.len());
         self.buf_ctx.virtual_pos.x = self.buf_ctx.cursorpos.x;
+        self.fit_ctx_frame();
+    }
+
+    fn fit_ctx_frame(&mut self) {
+        let y = self.buf_ctx.cursorpos.y;
+        let top = self.buf_ctx.topline;
+        let h = self.height() as usize;
+        self.buf_ctx.topline = top.clamp(y.saturating_sub(h - 1), y);
+    }
+
+    fn center_view(&mut self) {
+        let y = self.buf_ctx.cursorpos.y;
+        self.buf_ctx.topline = y.saturating_sub(self.height() as usize/2);
     }
 
     // pub fn insert_char<B: Buffer>(&mut self,
@@ -406,17 +434,27 @@ impl TextBox {
                 y: topleft.y,
             },
             botright: TermPos {
-                x: width,
-                y: height,
+                x: topleft.x + width,
+                y: topleft.y + height,
             },
         }
     }
 
     pub fn draw(&self) -> TermPos {
         term::rst_cur();
-        term::goto(self.topleft);
-        screen_write!("{: <width$}", self.buf, width = self.width() as usize);
-        term::flush();
+        for (i, line) in self
+            .buf
+            .lines()
+            .chain(std::iter::repeat(""))
+            .take(self.height() as usize)
+            .enumerate()
+        {
+            term::goto(TermPos {
+                x: self.topleft.x,
+                y: self.topleft.y + i as u32,
+            });
+            screen_write!("{: <width$}", line, width = self.width() as usize);
+        }
         self.botright
     }
 

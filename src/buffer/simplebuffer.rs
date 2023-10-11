@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{debug::log, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     os::unix::prelude::OsStrExt,
@@ -59,17 +59,27 @@ impl super::Buf for SimpleBuffer {
     }
 
     fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str> {
-        self.data
-            .lines()
-            .skip(lines.start)
-            .take(lines.len())
-            .collect()
+        let mut out = Vec::with_capacity(lines.len());
+        let line_nums = self.line_nums();
+        let mut it = line_nums[lines.clone()].iter().peekable();
+        while let Some(&start) = it.next() {
+            let &end = it
+                .peek()
+                .map(std::ops::Deref::deref)
+                .or_else(|| line_nums.get(lines.end))
+                .unwrap_or(&self.data.len());
+            out.push(self.data[start..end].trim_end_matches('\n'))
+        }
+        out
     }
 
     fn delete_char(&mut self, ctx: &mut crate::window::BufCtx) -> char {
-        self.outdated_lines.set(true);
         let off = self.to_fileoff(ctx.cursorpos);
-        self.data.remove(off)
+        let c = self.data.remove(off);
+        self.outdated_lines.set(true);
+        ctx.cursorpos.x -= 1;
+        ctx.virtual_pos.x -= 1;
+        c
     }
 
     fn get_off(&self, pos: super::DocPos) -> usize {
@@ -100,8 +110,16 @@ impl super::Buf for SimpleBuffer {
     }
 
     fn insert_str(&mut self, ctx: &mut crate::window::BufCtx, s: &str) {
+        let off = self.to_fileoff(ctx.cursorpos);
+        self.data.insert_str(off, s);
         self.outdated_lines.set(true);
-        self.data.insert_str(self.to_fileoff(ctx.cursorpos), s);
+        let new_off = off + s.len();
+        if s.contains('\n') {
+            self.update_bufctx(ctx, new_off);
+        } else {
+            ctx.cursorpos.x += s.len();
+            ctx.virtual_pos.x = ctx.cursorpos.x;
+        }
     }
 
     fn path(&self) -> Option<&Path> {
@@ -131,6 +149,21 @@ impl SimpleBuffer {
             drop(lines)
         }
         self.lines.borrow()
+    }
+
+    fn update_bufctx(&self, ctx: &mut BufCtx, new_off: usize) {
+        let lines = self.line_nums();
+        let y = lines
+            .iter()
+            .enumerate()
+            .find(|&(_, &l)| l > new_off)
+            .map_or(lines.len(), |(i, _)| i)
+            - 1;
+        let x = new_off - lines.get(y).unwrap_or(&lines.len());
+        ctx.cursorpos.x = x;
+        ctx.virtual_pos.x = x;
+        ctx.virtual_pos.y = y;
+        ctx.cursorpos.y = y;
     }
 }
 

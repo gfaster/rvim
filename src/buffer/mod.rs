@@ -91,6 +91,10 @@ pub trait Buf: Sized {
     fn last(&self) -> DocPos;
     fn insert_str(&mut self, ctx: &mut crate::window::BufCtx, s: &str);
     fn path(&self) -> Option<&std::path::Path>;
+
+    fn line(&self, idx: usize) -> &str {
+        self.get_lines(idx..idx)[0]
+    }
 }
 
 pub struct LinesInclusiveIter<'a>(std::str::SplitInclusive<'a, char>);
@@ -159,9 +163,9 @@ pub(crate) mod test {
         let pos = ctx.cursorpos;
         let off = pos.x
             + buf_str
-                .lines()
+                .lines_inclusive()
                 .take(pos.y)
-                .map(|l| l.len() + 1)
+                .map(str::len)
                 .sum::<usize>();
         buf_str.replace_range(off..off, s);
         b.insert_str(ctx, s);
@@ -485,7 +489,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[ignore = "Needs test fix"]
+    #[ignore = "I don't understand it"]
     fn end_complex() {
         let buf: Buffer = buffer_with_changes();
 

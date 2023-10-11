@@ -35,6 +35,9 @@ pub enum Mode {
 
 // how I handle the interrupts for now - exits on true
 static PENDING: AtomicBool = AtomicBool::new(false);
+static DEFAULT_PANIC: std::sync::Mutex<
+    Option<Box<dyn Fn(&PanicInfo<'_>) + 'static + Send + Sync>>,
+> = std::sync::Mutex::new(None);
 
 // holds the original termios state to restore to when exiting
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
@@ -51,6 +54,7 @@ fn main() {
     unsafe {
         ORIGINAL_TERMIOS = Some(termios::tcgetattr(STDIN_FILENO).unwrap());
     }
+    *DEFAULT_PANIC.try_lock().expect("first thread to take lock") = Some(panic::take_hook());
     panic::set_hook(Box::new(panic_handler));
 
     // let buf = buffer::Buffer::new("./assets/test/passage_wrapped.txt").unwrap();
@@ -100,20 +104,19 @@ fn panic_handler(pi: &PanicInfo) {
         termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termio).unwrap_or(());
     }
 
-    eprintln!("DON'T PANIC, it said in large, friendly letters.");
+    eprintln!("DON'T PANIC, it said in large, friendly letters.\n");
 
     debug::cleanup();
 
-    if let Some(location) = pi.location() {
-        eprintln!("Panicked at {}:{}", location.file(), location.line());
+    if let Ok(mut lock) = DEFAULT_PANIC.try_lock() {
+        if let Some(default_panic) = lock.take() {
+            default_panic(pi);
+        } else {
+            eprintln!("default hook was not saved");
+        }
+    } else {
+        eprintln!("unable to acquire lock on default panic hook");
     }
-
-    if let Some(payload) = pi.payload().downcast_ref::<&str>() {
-        eprintln!("on: {:?}", payload);
-    } else if let Some(payload) = pi.payload().downcast_ref::<String>() {
-        eprintln!("on: {:?}", payload);
-    }
-    eprint!("\n\n");
 }
 
 extern "C" fn sa_handler(_signum: libc::c_int) {
