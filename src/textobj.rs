@@ -9,6 +9,7 @@ pub enum TextObjectModifier {
 /// appropriate
 ///
 /// An alternative would be to use straight function pointers
+#[derive(PartialEq, Eq, Debug)]
 pub enum Motion {
     ScreenSpace { dy: isize, dx: isize },
     BufferSpace { doff: isize },
@@ -216,7 +217,7 @@ pub fn text_object_from_motion(motion: TextMotion, buf: &Buffer, off: DocPos) ->
     }
 }
 
-pub fn word_object(_buf: &Buffer, _pos: DocPos) -> Option<DocRange> {
+pub fn inner_word_object(_buf: &Buffer, _pos: DocPos) -> Option<DocRange> {
     todo!()
 }
 

@@ -26,7 +26,7 @@ use std::{
 #[allow(unused_imports)]
 use crate::debug::log;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     Normal,
     Insert,

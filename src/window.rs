@@ -379,7 +379,7 @@ impl Window {
 
     fn center_view(&mut self) {
         let y = self.buf_ctx.cursorpos.y;
-        self.buf_ctx.topline = y.saturating_sub(self.height() as usize/2);
+        self.buf_ctx.topline = y.saturating_sub(self.height() as usize / 2);
     }
 
     // pub fn insert_char<B: Buffer>(&mut self,
