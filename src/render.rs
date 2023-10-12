@@ -217,6 +217,7 @@ impl Ctx {
                     let buf_ctx = &mut self.window.buf_ctx;
                     let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
                     buf.insert_str(buf_ctx, c.replace('\r', "\n").as_str());
+                    self.window.fit_ctx_frame();
                     self.window.draw(self);
                 }
                 crate::input::Operation::Delete => {

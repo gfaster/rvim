@@ -370,7 +370,7 @@ impl Window {
         self.fit_ctx_frame();
     }
 
-    fn fit_ctx_frame(&mut self) {
+    pub fn fit_ctx_frame(&mut self) {
         let y = self.buf_ctx.cursorpos.y;
         let top = self.buf_ctx.topline;
         let h = self.height() as usize;

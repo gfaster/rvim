@@ -77,8 +77,12 @@ impl super::Buf for SimpleBuffer {
         let off = self.to_fileoff(ctx.cursorpos);
         let c = self.data.remove(off);
         self.outdated_lines.set(true);
-        ctx.cursorpos.x -= 1;
-        ctx.virtual_pos.x -= 1;
+        if c == '\n' {
+            self.update_bufctx(ctx, off.saturating_sub(1));
+        } else {
+            ctx.cursorpos.x = ctx.cursorpos.x.saturating_sub(1);
+            ctx.virtual_pos = ctx.cursorpos;
+        }
         c
     }
 
@@ -151,19 +155,22 @@ impl SimpleBuffer {
         self.lines.borrow()
     }
 
-    fn update_bufctx(&self, ctx: &mut BufCtx, new_off: usize) {
+    fn off_to_docpos(&self, off: usize) -> DocPos {
         let lines = self.line_nums();
         let y = lines
             .iter()
             .enumerate()
-            .find(|&(_, &l)| l > new_off)
+            .find(|&(_, &l)| l > off)
             .map_or(lines.len(), |(i, _)| i)
-            - 1;
-        let x = new_off - lines.get(y).unwrap_or(&lines.len());
-        ctx.cursorpos.x = x;
-        ctx.virtual_pos.x = x;
-        ctx.virtual_pos.y = y;
-        ctx.cursorpos.y = y;
+            .saturating_sub(1);
+        let x = off - lines.get(y).unwrap_or(&lines.len());
+        DocPos { x, y }
+    }
+
+    fn update_bufctx(&self, ctx: &mut BufCtx, new_off: usize) {
+        let pos = self.off_to_docpos(new_off);
+        ctx.cursorpos = pos;
+        ctx.virtual_pos = pos;
     }
 }
 

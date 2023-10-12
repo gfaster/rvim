@@ -514,6 +514,97 @@ pub(crate) mod test {
         assert_eq!(buf.last(), DocPos { x: 3, y: 1 })
     }
 
+    #[test]
+    fn delete_char() {
+        let mut buf = Buffer::from_str("0123456789\nasdf");
+        let expected = "012346789\nasdf";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 5, y: 0},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), '5');
+        assert_eq!(ctx.cursorpos, DocPos { x: 4, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_first_of_line() {
+        let mut buf = Buffer::from_str("0123456789\nasdf");
+        let expected = "0123456789\nsdf";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 0, y: 1},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), 'a');
+        assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 1 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_newl() {
+        let mut buf = Buffer::from_str("0123456789\nasdf");
+        let expected = "0123456789asdf";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 10, y: 0},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), '\n');
+        assert_eq!(ctx.cursorpos, DocPos { x: 9, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_just_newl() {
+        let mut buf = Buffer::from_str("\n\n\n");
+        let expected = "\n\n";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 0, y: 1},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), '\n');
+        assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_first() {
+        let mut buf = Buffer::from_str("asdf");
+        let expected = "sdf";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 0, y: 0},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), 'a');
+        assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_only() {
+        let mut buf = Buffer::from_str(" ");
+        let expected = "";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 0, y: 0},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), ' ');
+        assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn delete_char_only_lf() {
+        let mut buf = Buffer::from_str("\n");
+        let expected = "";
+        let mut ctx = BufCtx {
+            cursorpos: DocPos { x: 0, y: 0},
+            ..BufCtx::new(BufId::new())
+        };
+        assert_eq!(buf.delete_char(&mut ctx), '\n');
+        assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 0 });
+        assert_buf_eq(&buf, expected);
+    }
+
     mod lines_inclusive {
         use super::*;
 
