@@ -37,7 +37,7 @@ impl Command {
                 Ok(())
             }
             Command::Quit => {
-                crate::PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
+                crate::exit();
                 Ok(())
             }
         }

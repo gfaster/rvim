@@ -33,8 +33,9 @@ pub enum Mode {
     Command,
 }
 
-// how I handle the interrupts for now - exits on true
-static PENDING: AtomicBool = AtomicBool::new(false);
+static FALLBACK_EXIT: AtomicBool = AtomicBool::new(false);
+static EXIT_CHANNEL: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>> = std::sync::Mutex::new(None);
+
 static DEFAULT_PANIC: std::sync::Mutex<
     Option<Box<dyn Fn(&PanicInfo<'_>) + 'static + Send + Sync>>,
 > = std::sync::Mutex::new(None);
@@ -42,13 +43,15 @@ static DEFAULT_PANIC: std::sync::Mutex<
 // holds the original termios state to restore to when exiting
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
 
-fn main() {
-    // setup interrupt handling
-    let sighandler = SigHandler::Handler(sa_handler);
-    let sig = signal::SigAction::new(sighandler, SaFlags::empty(), SigSet::empty());
-    unsafe {
-        signal::sigaction(signal::Signal::SIGINT, &sig).unwrap();
+fn exit() {
+    FALLBACK_EXIT.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Some(ch) = EXIT_CHANNEL.lock().unwrap().take() {
+        let _ = ch.send(());
     }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), ()> {
 
     // panic handler is needed because we need to restore the terminal
     unsafe {
@@ -69,20 +72,31 @@ fn main() {
     .unwrap();
     ctx.render();
 
-    loop {
-        // Todo: run on separate thread
-        if let Some(token) = input::handle_input(&ctx) {
-            ctx.process_action(token);
-            ctx.render();
-        }
+    let (send, mut recv) = tokio::sync::oneshot::channel::<()>();
+    *EXIT_CHANNEL.lock().unwrap() = Some(send);
+    let mut stdin = tokio::io::stdin();
 
-        if PENDING.load(std::sync::atomic::Ordering::Acquire) {
+
+    loop {
+        tokio::select! {
+            Some(token) = input::handle_input(&ctx, &mut stdin) => {
+                ctx.process_action(token);
+                ctx.render();
+            },
+            _ = &mut recv => {
+                break;
+            },
+            // Ok(_) = tokio::signal::ctrl_c() => {
+            //     break;
+            // }
+        };
+        if FALLBACK_EXIT.load(std::sync::atomic::Ordering::Acquire) {
             break;
         }
     }
 
-    term::altbuf_disable();
     term::flush();
+    term::altbuf_disable();
 
     // eprintln!("reached end of main loop");
     if let Some(termios) = unsafe { &ORIGINAL_TERMIOS } {
@@ -91,6 +105,7 @@ fn main() {
         panic!("unable to reset terminal");
     }
     debug::cleanup();
+    Ok(())
 }
 
 /// Panic handler. Needed becauase we take over the screen during execution and we should clean up
@@ -117,9 +132,4 @@ fn panic_handler(pi: &PanicInfo) {
     } else {
         eprintln!("unable to acquire lock on default panic hook");
     }
-}
-
-extern "C" fn sa_handler(_signum: libc::c_int) {
-    // std::process::Command::new("/usr/bin/reset").spawn().unwrap();
-    PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
 }

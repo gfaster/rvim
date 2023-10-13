@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::fmt::Write;
 use std::{io::stdout, sync::Mutex};
 
-thread_local! {
-    static SCREEN: RefCell<Screen> =  const { RefCell::new(Screen { buf: String::new() }) };
-}
+static SCREEN: Mutex<Screen> = Mutex::new(Screen { buf: String::new() });
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TermPos {
@@ -28,12 +26,10 @@ pub struct Screen {
 
 impl Screen {
     pub fn write(args: std::fmt::Arguments) {
-        SCREEN.with(|s| {
-            s.borrow_mut()
-                .buf
-                .write_fmt(args)
-                .expect("can write to string")
-        })
+        let mut s = SCREEN.lock().unwrap();
+        s.buf
+            .write_fmt(args)
+            .expect("can write to string")
     }
 }
 
@@ -57,7 +53,7 @@ pub fn altbuf_enable() {
 }
 
 pub fn altbuf_disable() {
-    screen_write!("\x1b[?1049l");
+    print!("\x1b[?1049l");
 }
 
 pub fn goto(pos: TermPos) {
@@ -65,10 +61,8 @@ pub fn goto(pos: TermPos) {
 }
 
 pub fn flush() {
-    SCREEN.with(|s| {
-        let mut s = s.borrow_mut();
-        print!("{}", s.buf);
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        s.buf.clear();
-    })
+    let mut s = SCREEN.lock().unwrap();
+    print!("{}", s.buf);
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    s.buf.clear();
 }

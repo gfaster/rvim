@@ -1,4 +1,5 @@
 use crate::textobj::Motion;
+use tokio::io::AsyncReadExt;
 use std::io::stdin;
 use std::io::Read;
 
@@ -54,15 +55,15 @@ impl From<Operation> for Action {
     }
 }
 
-pub fn handle_input(ctx: &Ctx) -> Option<Action> {
+async fn read_char(reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<char> {
+    char::try_from(reader.read_u8().await.ok()?).ok()
+}
+
+pub async fn handle_input(ctx: &Ctx, reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<Action> {
     match ctx.mode {
-        Mode::Normal => handle_normal_mode(),
+        Mode::Normal => syn::parse_normal_command(reader).await,
         Mode::Insert | Mode::Command => Some({
-            let c = stdin()
-                .bytes()
-                .map(|b| Some(char::from(b.ok()?)))
-                .next()
-                .flatten()?;
+            let c = read_char(reader).await?;
             // log!("{:x}", c as u32);
             match c {
                 '\x1b' => Action {
@@ -86,15 +87,12 @@ pub fn handle_input(ctx: &Ctx) -> Option<Action> {
     }
 }
 
-fn handle_normal_mode() -> Option<Action> {
-    let mut stdin = stdin().lock();
-    syn::parse_normal_command(&mut stdin)
-}
-
 /// syntax and structure of commands
 mod syn {
+    use super::read_char;
     use crate::textobj;
     use textobj::motions;
+    use tokio::io::AsyncRead;
 
     use super::Action;
     use super::Mode;
@@ -133,13 +131,7 @@ mod syn {
         action: Action,
     }
 
-    fn parse_motion(first: char, reader: &mut impl std::io::Read) -> Option<Motion> {
-        let mut next_char = || -> Option<char> {
-            reader
-                .bytes()
-                .map(|b| char::from(b.expect("cannot read char")))
-                .next()
-        };
+    async fn parse_motion(first: char, reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<Motion> {
         let mut defs: Vec<_> = load_motions()
             .into_iter()
             .filter(|d| d.comps[0] == CommComp::Char(first))
@@ -147,7 +139,7 @@ mod syn {
         let mut idx = 1;
         let mut rem = vec![];
         while defs.len() > 1 {
-            let c = next_char()?;
+            let c = read_char(reader).await?;
             for (i, CommDef { comps: comp, .. }) in defs.iter().enumerate() {
                 if comp.len() == idx {
                     return Some(
@@ -183,13 +175,7 @@ mod syn {
         }
     }
 
-    pub(super) fn parse_normal_command(reader: &mut impl std::io::Read) -> Option<super::Action> {
-        let mut next_char = || -> Option<char> {
-            reader
-                .bytes()
-                .map(|b| char::from(b.expect("cannot read char")))
-                .next()
-        };
+    pub(super) async fn parse_normal_command(reader: &mut (impl AsyncRead + Unpin)) -> Option<super::Action> {
         let mut idx = 0;
         let mut defs: Vec<_> = load_comps()
             .into_iter()
@@ -197,7 +183,7 @@ mod syn {
             .collect();
         let mut rem = vec![];
         loop {
-            let c = next_char()?;
+            let c = read_char(reader).await?;
             let maybe_motion = is_motion_start(c);
             for (i, CommDef { comps, .. }) in defs.iter().enumerate() {
                 // if comps.len() == idx && !matches!(comps.last(), Some(CommComp::Motion)) {
@@ -222,7 +208,7 @@ mod syn {
                             "commands with motion should not include motion"
                         );
                         return Some(Action {
-                            motion: Some(parse_motion(c, reader)?),
+                            motion: Some(parse_motion(c, reader).await?),
                             ..base.action
                         });
                     }
@@ -330,9 +316,9 @@ mod syn {
 
         macro_rules! input_test {
             ($name:ident, $input:literal => match $expected:pat) => {
-                #[test]
-                fn $name() {
-                    let res = parse_normal_command(&mut $input.as_bytes()).expect("success");
+                #[tokio::test]
+                async fn $name() {
+                    let res = parse_normal_command(&mut $input.as_bytes()).await.expect("success");
                     assert!(
                         matches!(res, $expected),
                         "expected {}, found {:?}",
@@ -342,9 +328,9 @@ mod syn {
                 }
             };
             ($name:ident, $input:literal => $expected:expr) => {
-                #[test]
-                fn $name() {
-                    let res = parse_normal_command(&mut $input.as_bytes());
+                #[tokio::test]
+                async fn $name() {
+                    let res = parse_normal_command(&mut $input.as_bytes()).await;
                     let expected = $expected.into();
                     assert_eq!(res, Some(expected));
                 }
