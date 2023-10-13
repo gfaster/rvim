@@ -75,6 +75,10 @@ impl BufCtx {
             topline: 0,
         }
     }
+
+    pub fn new_anon() -> Self {
+        Self::new(BufId::new_anon())
+    }
 }
 
 #[derive(Default)]
@@ -331,7 +335,6 @@ impl Window {
     }
 
     pub fn cursorpos(&self) -> TermPos {
-        // log!("calling cursorpos from {:}", std::panic::Location::caller());
         self.buf_ctx.win_pos(self)
     }
 

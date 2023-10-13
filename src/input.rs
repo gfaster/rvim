@@ -10,7 +10,8 @@ pub enum Operation {
     Change,
     Replace(String),
     Insert(String),
-    Delete,
+    DeleteBefore,
+    DeleteAfter,
     SwitchMode(Mode),
     Debug,
     None,
@@ -72,7 +73,7 @@ pub fn handle_input(ctx: &Ctx) -> Option<Action> {
                 '\x7f' | '\x08' => Action {
                     // delete/backspace keys
                     motion: None,
-                    operation: Operation::Delete,
+                    operation: Operation::DeleteBefore,
                     ..Action::new()
                 },
                 _ => Action {
@@ -295,15 +296,15 @@ mod syn {
             ..Action::new()
         },
         delete_char: Normal = ('x') => Action {
-            operation: Operation::Delete,
-            post_motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
+            operation: Operation::DeleteAfter,
+            // post_motion: Some(Motion::ScreenSpace { dy: 0, dx: 1 }),
             ..Action::new()
         },
         ex: Normal = (':') => Operation::SwitchMode(Mode::Command),
         debug: Normal = ('p') => Operation::Debug,
 
         change: Normal = ('c' {motion}) => Operation::Change,
-        delete: Normal = ('d' {motion}) => Operation::Delete,
+        delete: Normal = ('d' {motion}) => Operation::DeleteBefore,
 
 
         left: Motion = ('h') => Motion::ScreenSpace { dy: 0, dx: -1 },

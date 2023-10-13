@@ -1,9 +1,10 @@
 use std::ops::RangeBounds;
+use crate::prelude::*;
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
 /// one-to-one. Also, using usize since it can very well be more than u32::max (though not for now)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Ord, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DocPos {
     pub x: usize,
     pub y: usize,
@@ -19,11 +20,12 @@ impl PartialOrd for DocPos {
     }
 }
 
-impl Ord for DocPos {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).expect("DocPos is comparable")
+impl DocPos {
+    fn new() -> Self {
+        Self::default()
     }
 }
+
 
 #[derive(Debug, Clone, Copy)]
 pub struct DocRange {
@@ -85,15 +87,45 @@ pub trait Buf: Sized {
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()>;
     fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str>;
     fn delete_char(&mut self, ctx: &mut crate::window::BufCtx) -> char;
+    fn delete_char_before(&mut self, ctx: &mut crate::window::BufCtx) -> Option<char>;
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
     fn end(&self) -> DocPos;
     fn last(&self) -> DocPos;
     fn insert_str(&mut self, ctx: &mut crate::window::BufCtx, s: &str);
     fn path(&self) -> Option<&std::path::Path>;
+    fn len(&self) -> usize;
+    fn clear(&mut self, ctx: &mut BufCtx);
 
     fn line(&self, idx: usize) -> &str {
         self.get_lines(idx..idx)[0]
+    }
+
+    /// push a character onto the end
+    fn push(&mut self, ctx: &mut BufCtx, c: char) {
+        let mut tmp = [0; 4];
+        self.insert_str(ctx, c.encode_utf8(&mut tmp))
+    }
+
+    /// pop a character from the end
+    fn pop(&mut self, ctx: &mut BufCtx) -> char {
+        ctx.cursorpos = self.last();
+        ctx.virtual_pos = ctx.cursorpos;
+        self.delete_char(ctx)
+    }
+}
+
+impl std::fmt::Display for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = Vec::<u8>::new();
+        self.serialize(&mut out).unwrap();
+        std::fmt::Display::fmt(&String::from_utf8_lossy(&out), f)
+    }
+}
+
+impl std::default::Default for Buffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -146,6 +178,7 @@ pub(crate) mod test {
     use crate::render::BufId;
     use crate::window::BufCtx;
 
+    #[track_caller]
     fn assert_buf_eq(b: &Buffer, s: &str) -> String {
         let mut out = Vec::<u8>::new();
         b.serialize(&mut out)
@@ -597,12 +630,31 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("\n");
         let expected = "";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 0, y: 0},
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), '\n');
         assert_eq!(ctx.cursorpos, DocPos { x: 0, y: 0 });
         assert_buf_eq(&buf, expected);
+    }
+
+    #[test]
+    fn len() {
+        let init = "this is a buffer\nasdfasdfasdfa";
+        let buf = Buffer::from_str(init);
+        assert_eq!(buf.len(), init.len());
+    }
+
+    #[test]
+    fn clear() {
+        let mut buf = Buffer::from_str("this is a buffer\nit will be cleared.");
+        let mut ctx = BufCtx {
+            cursorpos: DocPos {x: 5, y: 1},
+            ..BufCtx::new(BufId::new())
+        };
+        buf.clear(&mut ctx);
+        assert_eq!(&buf.to_string(), "");
+        assert_eq!(ctx.cursorpos, DocPos::new());
+        assert_eq!(buf.len(), 0);
     }
 
     mod lines_inclusive {

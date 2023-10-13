@@ -12,22 +12,35 @@ use crate::{buffer::*, Mode};
 use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BufId(usize);
+pub enum BufId{
+    Normal(usize),
+    Anon(usize),
+}
+
 
 #[cfg(test)]
 impl BufId {
     pub fn new() -> Self {
-        BufId(1)
+        BufId::Normal(1)
     }
 }
 
 impl BufId {
     pub fn id(&self) -> usize {
-        self.0
+        match self {
+            BufId::Normal(id) => *id,
+            BufId::Anon(id) => *id,
+        }
+    }
+
+    pub fn new_anon() -> Self {
+        static ANON_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        Self::Anon(ANON_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 }
 
@@ -53,7 +66,7 @@ impl Ctx {
     pub fn new_testing(buf: Buffer) -> Self {
         let term = libc::STDIN_FILENO;
         let termios = termios::tcgetattr(term).unwrap();
-        let bufid = BufId(1);
+        let bufid = BufId::Normal(1);
         let window = Window::new(bufid);
         Self {
             id_counter: 2,
@@ -83,7 +96,7 @@ impl Ctx {
         termios.local_flags.remove(LocalFlags::ECHO);
         // termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
-        let bufid = BufId(1);
+        let bufid = BufId::Normal(1);
         let window = Window::new(bufid);
         Self {
             id_counter: 2,
@@ -143,7 +156,7 @@ impl Ctx {
     }
 
     pub fn open_buffer(&mut self, buf: Buffer) {
-        let buf_id = BufId(self.id_counter);
+        let buf_id = BufId::Normal(self.id_counter);
         self.id_counter += 1;
         self.buffers
             .insert(buf_id, buf)
@@ -152,12 +165,8 @@ impl Ctx {
         self.window.clear();
     }
 
-    pub fn diag(&mut self, args: std::fmt::Arguments) {
-        self.command_line.write_diag(args)
-    }
-
     pub fn err(&mut self, err: &(impl std::error::Error + ?Sized)) {
-        self.command_line.write_diag(format_args!("Error: {}", err))
+        self.command_line.write_fmt(format_args!("Error: {}", err)).unwrap();
     }
 
     fn apply_motion(&mut self, motion: Motion) {
@@ -198,12 +207,16 @@ impl Ctx {
                         self.command_line.input(CommandLineInput::Append(c));
                     }
                 }
-                crate::input::Operation::Delete => {
+                crate::input::Operation::DeleteBefore => {
                     self.command_line.input(CommandLineInput::Delete)
+                }
+                crate::input::Operation::DeleteAfter => {
+                    panic!("only backspace is implemented for command line")
+                    // self.command_line.input(CommandLineInput::Delete)
                 }
                 crate::input::Operation::SwitchMode(m) => {
                     if !matches!(m, Mode::Command) {
-                        self.command_line.clear();
+                        self.command_line.clear_command();
                     }
                     self.mode = m
                 }
@@ -220,12 +233,23 @@ impl Ctx {
                     self.window.fit_ctx_frame();
                     self.window.draw(self);
                 }
-                crate::input::Operation::Delete => {
+                crate::input::Operation::DeleteBefore => {
                     let buf_ctx = &mut self.window.buf_ctx;
-                    self.buffers
+                    let buf = self.buffers
                         .get_mut(&buf_ctx.buf_id)
-                        .unwrap()
-                        .delete_char(buf_ctx);
+                        .unwrap();
+                    buf.delete_char_before(buf_ctx);
+                    self.window.draw(self);
+                }
+                crate::input::Operation::DeleteAfter => {
+                    let buf_ctx = &mut self.window.buf_ctx;
+                    let buf = self.buffers
+                        .get_mut(&buf_ctx.buf_id)
+                        .unwrap();
+                    buf.delete_char(buf_ctx);
+                    if buf_ctx.cursorpos.x != 0 {
+                        self.window.move_cursor(buf, 1, 0);
+                    }
                     self.window.draw(self);
                 }
                 crate::input::Operation::SwitchMode(m) => {

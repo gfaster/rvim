@@ -1,4 +1,6 @@
 use std::fmt::Write;
+use crate::debug::log;
+use crate::prelude::*;
 
 use crate::{screen_write, term, window::TextBox};
 
@@ -22,7 +24,8 @@ pub enum CommandType {
 
 pub struct CommandLine {
     mode: CommandLineMode,
-    buf: String,
+    ctx: BufCtx,
+    buf: Buffer,
     typ: CommandType,
     output: Option<TextBox>,
 }
@@ -42,9 +45,9 @@ impl CommandLine {
                     CommandType::Find => '/',
                 };
                 screen_write!(
-                    "\x1b[0m{lead}{: <width$}",
+                    "\x1b[0m{lead}{: <w$}",
                     self.buf,
-                    width = w.0 as usize - 1
+                    w = w.0 as usize - 1
                 );
                 term::goto(term::TermPos {
                     x: self.buf.len() as u32 + 1,
@@ -58,46 +61,23 @@ impl CommandLine {
         }
     }
 
-    pub fn write_diag(&mut self, args: std::fmt::Arguments) {
-        let (w, h) = terminal_size::terminal_size().unwrap();
-        let mut output = self.output.take().unwrap_or_else(|| {
-            TextBox::new_withdim(
-                term::TermPos {
-                    x: 0,
-                    y: h.0 as u32 - 1,
-                },
-                w.0 as u32,
-                1,
-            )
-        });
-        output.buf.write_fmt(args).unwrap();
-        let h = output
-            .buf
-            .lines()
-            .count()
-            .min((h.0 as usize).saturating_sub(5));
-        output.resize(1, h as u32);
-        output.clamp_to_screen();
-        self.output = Some(output);
-    }
-
     pub fn input(&mut self, input: CommandLineInput) {
         self.mode = CommandLineMode::Input;
         self.output = None;
         match input {
             CommandLineInput::Append(c) => {
-                self.buf.push(c);
+                self.buf.push(&mut self.ctx, c);
             }
             CommandLineInput::Delete => {
-                self.buf.pop();
+                self.buf.pop(&mut self.ctx);
             }
         };
         self.render();
-        let (_, h) = terminal_size::terminal_size().unwrap();
-        term::goto(term::TermPos {
-            x: self.buf.len() as u32 + 1,
-            y: h.0 as u32 - 1,
-        });
+        // let (_, h) = terminal_size::terminal_size().unwrap();
+        // term::goto(term::TermPos {
+        //     x: self.buf.len() as u32 + 1,
+        //     y: h.0 as u32 - 1,
+        // });
     }
 
     pub fn set_type(&mut self, typ: CommandType) {
@@ -111,24 +91,57 @@ impl CommandLine {
 
     pub fn complete(&mut self) -> Option<Command> {
         let s = std::mem::take(&mut self.buf);
-        let out = parser::parse_command(&s, self);
-        self.clear();
+        let out = parser::parse_command(&s.to_string(), self);
+        self.clear_command();
         self.mode = CommandLineMode::Output;
         out
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear_all(&mut self) {
+        self.clear_command();
+        self.output.as_mut().map(|t| t.buf.clear());
+        self.output = None;
+    }
+
+    pub fn clear_command(&mut self) {
         self.typ = CommandType::None;
-        self.buf.clear();
+        self.buf.clear(&mut self.ctx);
     }
 
     pub fn new() -> Self {
         Self {
             mode: CommandLineMode::Output,
-            buf: String::new(),
+            buf: Buffer::new(),
+            ctx: BufCtx::new_anon(),
             typ: CommandType::None,
             output: None,
         }
+    }
+}
+
+impl std::fmt::Write for CommandLine {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let (w, h) = terminal_size::terminal_size().unwrap();
+        let mut output = self.output.take().unwrap_or_else(|| {
+            TextBox::new_withdim(
+                term::TermPos {
+                    x: 0,
+                    y: h.0 as u32 - 1,
+                },
+                w.0 as u32,
+                1,
+            )
+        });
+        output.buf.write_str(s)?;
+        let h = output
+            .buf
+            .lines()
+            .count()
+            .min((h.0 as usize).saturating_sub(5));
+        output.resize(1, h as u32);
+        output.clamp_to_screen();
+        self.output = Some(output);
+        Ok(())
     }
 }
 

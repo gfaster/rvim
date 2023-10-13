@@ -2,7 +2,7 @@ use crate::{debug::log, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     os::unix::prelude::OsStrExt,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, default,
 };
 
 use super::{Buf, DocPos};
@@ -86,6 +86,14 @@ impl super::Buf for SimpleBuffer {
         c
     }
 
+    fn delete_char_before(&mut self, ctx: &mut crate::window::BufCtx) -> Option<char> {
+        let off = self.to_fileoff(ctx.cursorpos).checked_sub(1)?;
+        let c = self.data.remove(off);
+        self.outdated_lines.set(true);
+        self.update_bufctx(ctx, off);
+        Some(c)
+    }
+
     fn get_off(&self, pos: super::DocPos) -> usize {
         self.to_fileoff(pos)
     }
@@ -128,6 +136,16 @@ impl super::Buf for SimpleBuffer {
 
     fn path(&self) -> Option<&Path> {
         self.path.as_ref().map(PathBuf::as_path)
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    fn clear(&mut self, ctx: &mut BufCtx) {
+        self.data.clear();
+        *ctx = BufCtx::new(ctx.buf_id);
+        self.outdated_lines.set(true);
     }
 }
 

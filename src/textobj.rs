@@ -194,7 +194,7 @@ pub mod motions {
     }
 
     pub(crate) fn end_of_line(buf: &Buffer, pos: DocPos) -> Option<DocPos> {
-        let x = buf.get_lines(pos.y..(pos.y + 1)).first()?.len();
+        let x = buf.line(pos.y).len();
         Some(DocPos { x, y: pos.y })
     }
 }

@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use lazy_regex::regex;
 use std::ops::Range;
 
@@ -67,18 +68,16 @@ impl<'a> Lexer<'a> {
         }
         for kind in TokenKindList::difference(kinds) {
             if self.try_next_expect(kind).is_ok() {
-                diag.write_diag(format_args!(
+                writeln!(
+                    diag,
                     "Expected {} but found {}",
                     TokenKindList(kinds),
                     kind
-                ));
+                ).unwrap();
                 return None;
             }
         }
-        diag.write_diag(format_args!(
-            "Expected {} but found EOL",
-            TokenKindList(kinds)
-        ));
+        write!(diag, "Expected {} but found EOL", TokenKindList(kinds)).unwrap();
         return None;
     }
 }
@@ -143,7 +142,7 @@ pub fn parse_command(s: &str, diag: &mut CommandLine) -> Option<Command> {
             path: args.next_expects(diag, &[TokenKind::Path])?.data.into(),
         },
         unknown => {
-            diag.write_diag(format_args!("Unknown command: {unknown:?}"));
+            write!(diag, "Unknown command: {unknown:?}").unwrap();
             return None;
         }
     };
