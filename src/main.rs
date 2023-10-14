@@ -6,6 +6,7 @@ mod input;
 mod prelude;
 mod render;
 mod term;
+mod tui;
 mod textobj;
 mod window;
 use prelude::*;

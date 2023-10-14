@@ -2,7 +2,10 @@ use std::fmt::Write;
 use crate::debug::log;
 use crate::prelude::*;
 
-use crate::{screen_write, term, window::TextBox};
+use crate::render::BufId;
+use crate::term::TermPos;
+use crate::window::Component;
+use crate::{screen_write, term, window::Window};
 
 use super::{parser, Command};
 
@@ -11,6 +14,7 @@ pub enum CommandLineInput {
     Delete,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum CommandLineMode {
     Input,
     Output,
@@ -24,73 +28,94 @@ pub enum CommandType {
 
 pub struct CommandLine {
     mode: CommandLineMode,
-    ctx: BufCtx,
-    buf: Buffer,
+    input_buf: Buffer,
     typ: CommandType,
-    output: Option<TextBox>,
+    other_ctx: BufCtx,
+    window: Window,
+    output_buf: Buffer,
+}
+
+macro_rules! out_ctx {
+    ($cmd:expr) => {
+        if $cmd.mode == CommandLineMode::Input {
+            &mut $cmd.other_ctx
+        } else {
+            &mut $cmd.window.buf_ctx
+        }
+    };
+}
+
+macro_rules! in_ctx {
+    ($cmd:expr) => {
+        if $cmd.mode == CommandLineMode::Output {
+            &mut $cmd.other_ctx
+        } else {
+            &mut $cmd.window.buf_ctx
+        }
+    };
 }
 
 impl CommandLine {
-    pub fn render(&self) {
+    pub fn render(&self, tui: &mut TermGrid) -> std::fmt::Result {
         match self.mode {
             CommandLineMode::Input => {
-                let (w, h) = terminal_size::terminal_size().unwrap();
-                term::goto(term::TermPos {
-                    x: 0,
-                    y: h.0 as u32 - 1,
-                });
                 let lead = match self.typ {
                     CommandType::Ex => ':',
                     CommandType::None => ' ',
                     CommandType::Find => '/',
                 };
-                screen_write!(
-                    "\x1b[0m{lead}{: <w$}",
-                    self.buf,
-                    w = w.0 as usize - 1
-                );
-                term::goto(term::TermPos {
-                    x: self.buf.len() as u32 + 1,
-                    y: h.0 as u32 - 1,
-                });
+                let (_, h) = tui.dim();
+                write!(
+                    tui.refbox(tui.line_bounds(h - 1)),
+                    "{lead}{}",
+                    self.input_buf
+                )?;
+                tui.set_cursorpos(TermPos {x: self.input_buf.len() as u32 - 1, y: h as u32 - 1});
             }
             CommandLineMode::Output => {
-                let Some(ref text) = self.output else { return };
-                text.draw();
+                if self.output_buf.len() > 0 {
+                    let (_, h) = tui.dim();
+                    write!(
+                        tui.refbox(tui.line_bounds(h - 1)),
+                        "{}",
+                        self.output_buf
+                    )?;
+                }
             }
+        }
+        Ok(())
+    }
+
+    pub fn input(&mut self, tui: &mut TermGrid, input: CommandLineInput) -> std::fmt::Result {
+        self.set_mode(CommandLineMode::Input);
+        match input {
+            CommandLineInput::Append(c) => {
+                self.input_buf.push(&mut self.window.buf_ctx, c);
+            }
+            CommandLineInput::Delete => {
+                self.input_buf.pop(&mut self.window.buf_ctx);
+            }
+        };
+        self.render(tui)
+    }
+
+    fn set_mode(&mut self, mode: CommandLineMode) {
+        if mode != self.mode {
+            std::mem::swap(&mut self.other_ctx, &mut self.window.buf_ctx);
         }
     }
 
-    pub fn input(&mut self, input: CommandLineInput) {
-        self.mode = CommandLineMode::Input;
-        self.output = None;
-        match input {
-            CommandLineInput::Append(c) => {
-                self.buf.push(&mut self.ctx, c);
-            }
-            CommandLineInput::Delete => {
-                self.buf.pop(&mut self.ctx);
-            }
-        };
-        self.render();
-        // let (_, h) = terminal_size::terminal_size().unwrap();
-        // term::goto(term::TermPos {
-        //     x: self.buf.len() as u32 + 1,
-        //     y: h.0 as u32 - 1,
-        // });
-    }
-
     pub fn set_type(&mut self, typ: CommandType) {
-        self.mode = match typ {
+        self.set_mode(match typ {
             CommandType::Ex => CommandLineMode::Input,
             CommandType::Find => CommandLineMode::Input,
             CommandType::None => CommandLineMode::Output,
-        };
+        });
         self.typ = typ;
     }
 
     pub fn complete(&mut self) -> Option<Command> {
-        let s = std::mem::take(&mut self.buf);
+        let s = std::mem::take(&mut self.input_buf);
         let out = parser::parse_command(&s.to_string(), self);
         self.clear_command();
         self.mode = CommandLineMode::Output;
@@ -99,54 +124,32 @@ impl CommandLine {
 
     pub fn clear_all(&mut self) {
         self.clear_command();
-        self.output.as_mut().map(|t| t.buf.clear());
-        self.output = None;
     }
 
     pub fn clear_command(&mut self) {
         self.typ = CommandType::None;
-        self.buf.clear(&mut self.ctx);
+        self.input_buf.clear(in_ctx!(self));
     }
 
-    pub fn new() -> Self {
+    pub fn new(tui: &TermGrid) -> Self {
+        let (w, h) = tui.dim();
+        let components = vec![
+            // Component::StatusLine(crate::window::StatusLine)
+        ];
         Self {
             mode: CommandLineMode::Output,
-            buf: Buffer::new(),
-            ctx: BufCtx::new_anon(),
+            input_buf: Buffer::new(),
+            other_ctx: BufCtx::new_anon(),
             typ: CommandType::None,
-            output: None,
+            output_buf: Buffer::new(),
+            window: Window::new_withdim(BufId::new_anon(), TermPos { x: 0, y: h - 1 }, w, 1, components),
         }
     }
 }
 
 impl std::fmt::Write for CommandLine {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let (w, h) = terminal_size::terminal_size().unwrap();
-        let mut output = self.output.take().unwrap_or_else(|| {
-            TextBox::new_withdim(
-                term::TermPos {
-                    x: 0,
-                    y: h.0 as u32 - 1,
-                },
-                w.0 as u32,
-                1,
-            )
-        });
-        output.buf.write_str(s)?;
-        let h = output
-            .buf
-            .lines()
-            .count()
-            .min((h.0 as usize).saturating_sub(5));
-        output.resize(1, h as u32);
-        output.clamp_to_screen();
-        self.output = Some(output);
+        self.output_buf.insert_str(out_ctx!(self), s);
         Ok(())
-    }
-}
-
-impl Default for CommandLine {
-    fn default() -> Self {
-        Self::new()
     }
 }

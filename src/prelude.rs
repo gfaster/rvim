@@ -5,3 +5,4 @@ pub use crate::buffer::DocRange;
 pub use crate::buffer::LinesInclusive;
 pub use crate::render::Ctx;
 pub use crate::window::BufCtx;
+pub use crate::tui::{TermGrid, Color, BasicColor};

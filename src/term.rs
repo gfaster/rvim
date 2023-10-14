@@ -1,24 +1,10 @@
+pub use crate::tui::TermPos;
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::{io::stdout, sync::Mutex};
 
 static SCREEN: Mutex<Screen> = Mutex::new(Screen { buf: String::new() });
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct TermPos {
-    pub x: u32,
-    pub y: u32,
-}
-
-impl TermPos {
-    pub fn row(&self) -> u32 {
-        self.y + 1
-    }
-
-    pub fn col(&self) -> u32 {
-        self.x + 1
-    }
-}
 
 pub struct Screen {
     buf: String,
@@ -36,28 +22,30 @@ impl Screen {
 #[macro_export]
 macro_rules! screen_write {
     ($($tt:tt)*) => {
-        $crate::term::Screen::write(format_args!($($tt)*))
+        // $crate::term::Screen::write(format_args!($($tt)*))
+        // todo!("remove screen_write usage")
+        compile_error!("remove screen_write usage")
     };
 }
 
 pub fn rst_cur() {
-    screen_write!("\x1b[1;1H");
+    // screen_write!("\x1b[1;1H");
 }
 
 pub fn default_style() {
-    screen_write!("\x1b[0m");
+    // screen_write!("\x1b[0m");
 }
 
 pub fn altbuf_enable() {
-    screen_write!("\x1b[?1049h");
+    // screen_write!("\x1b[?1049h");
 }
 
 pub fn altbuf_disable() {
     print!("\x1b[?1049l");
 }
 
-pub fn goto(pos: TermPos) {
-    screen_write!("\x1b[{};{}H", pos.row(), pos.col());
+pub fn goto(_pos: TermPos) {
+    // screen_write!("\x1b[{};{}H", pos.row(), pos.col());
 }
 
 pub fn flush() {

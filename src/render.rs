@@ -6,11 +6,13 @@ use crate::screen_write;
 use crate::textobj::Motion;
 
 use crate::term;
+use crate::tui::TermGrid;
 use crate::window::*;
 use crate::{buffer::*, Mode};
 
 use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::os::unix::io::RawFd;
@@ -50,9 +52,8 @@ pub struct Ctx {
     termios: Termios,
     orig_termios: Termios,
     command_line: CommandLine,
-    /// terminal size (w, h)
-    termsize: (u32, u32),
-    pub term: RawFd,
+    pub tui: RefCell<TermGrid>,
+    pub term_fd: RawFd,
     pub window: Window,
     pub mode: Mode,
 }
@@ -67,17 +68,18 @@ impl Ctx {
         let term = libc::STDIN_FILENO;
         let termios = termios::tcgetattr(term).unwrap();
         let bufid = BufId::Normal(1);
-        let window = Window::new(bufid);
+        let tui = TermGrid::new();
+        let window = Window::new(bufid, &tui);
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
             termios: termios.clone(),
             orig_termios: termios,
-            termsize: (80, 40),
-            term,
+            term_fd: term,
+            command_line: CommandLine::new(&tui),
+            tui: tui.into(),
             mode: Mode::Normal,
             window,
-            command_line: Default::default(),
         }
     }
 }
@@ -97,17 +99,18 @@ impl Ctx {
         termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId::Normal(1);
-        let window = Window::new(bufid);
+        let tui = TermGrid::new();
+        let window = Window::new(bufid, &tui);
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
             termios,
             orig_termios: orig,
-            term,
-            termsize: get_termsize(),
+            term_fd: term,
             mode: Mode::Normal,
             window,
-            command_line: Default::default(),
+            command_line: CommandLine::new(&tui),
+            tui: tui.into(),
         }
     }
 
@@ -120,31 +123,26 @@ impl Ctx {
     }
 
     pub fn render(&mut self) {
-        let currsize = get_termsize();
-        if currsize != self.termsize {
-            self.window.clear();
-            self.window.set_size_padded(currsize.0, currsize.1);
-            self.termsize = currsize;
-            term::rst_cur();
-            // clear the screen
-            screen_write!(
-                "{:>w$}",
-                "",
-                w = (self.termsize.0 * self.termsize.1) as usize
-            );
+        {
+            let tui = self.tui.get_mut();
+            if tui.resize_auto() {
+                self.window.set_size_padded(tui.dim().0, tui.dim().1);
+            }
         }
         match self.mode {
             Mode::Command => {
                 self.window.draw(self);
-                self.command_line.render();
-                term::flush();
+                let tui = self.tui.get_mut();
+                let _ = self.command_line.render(tui);
             }
             _ => {
-                self.command_line.render();
+                let tui = self.tui.get_mut();
+                let _ = self.command_line.render(tui);
                 self.window.draw(self);
-                term::flush();
             }
         }
+        let mut stdin = std::io::stdout().lock();
+        self.tui.get_mut().render(&mut stdin).unwrap();
     }
 
     pub fn focused(&self) -> BufId {
@@ -162,7 +160,7 @@ impl Ctx {
             .insert(buf_id, buf)
             .map(|_| panic!("Buf insertion tried to reuse an id"));
         self.window.buf_ctx.buf_id = buf_id;
-        self.window.clear();
+        self.tui.borrow_mut().clear();
     }
 
     pub fn err(&mut self, err: &(impl std::error::Error + ?Sized)) {
@@ -193,6 +191,7 @@ impl Ctx {
         if let Some(m) = action.motion {
             self.apply_motion(m)
         }
+        let tui = self.tui.get_mut();
         match self.mode {
             Mode::Command => match action.operation {
                 crate::input::Operation::Insert(s) => {
@@ -204,11 +203,11 @@ impl Ctx {
                             .map(|r| r.map_err(|e| self.err(&*e)));
                         self.mode = Mode::Normal;
                     } else {
-                        self.command_line.input(CommandLineInput::Append(c));
+                        let _ = self.command_line.input(tui, CommandLineInput::Append(c));
                     }
                 }
                 crate::input::Operation::DeleteBefore => {
-                    self.command_line.input(CommandLineInput::Delete)
+                    let _ = self.command_line.input(tui, CommandLineInput::Delete);
                 }
                 crate::input::Operation::DeleteAfter => {
                     panic!("only backspace is implemented for command line")
@@ -279,6 +278,6 @@ impl Ctx {
 
 impl Drop for Ctx {
     fn drop(&mut self) {
-        termios::tcsetattr(self.term, termios::SetArg::TCSANOW, &self.orig_termios).unwrap_or(());
+        termios::tcsetattr(self.term_fd, termios::SetArg::TCSANOW, &self.orig_termios).unwrap_or(());
     }
 }
