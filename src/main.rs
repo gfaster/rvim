@@ -33,9 +33,7 @@ pub enum Mode {
     Command,
 }
 
-static FALLBACK_EXIT: AtomicBool = AtomicBool::new(false);
-static EXIT_CHANNEL: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>> = std::sync::Mutex::new(None);
-
+static EXIT_PENDING: AtomicBool = AtomicBool::new(false);
 static DEFAULT_PANIC: std::sync::Mutex<
     Option<Box<dyn Fn(&PanicInfo<'_>) + 'static + Send + Sync>>,
 > = std::sync::Mutex::new(None);
@@ -44,27 +42,25 @@ static DEFAULT_PANIC: std::sync::Mutex<
 static mut ORIGINAL_TERMIOS: Option<Termios> = None;
 
 fn exit() {
-    FALLBACK_EXIT.store(true, std::sync::atomic::Ordering::Relaxed);
-    if let Some(ch) = EXIT_CHANNEL.lock().unwrap().take() {
-        let _ = ch.send(());
-    }
+    EXIT_PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-async fn main_loop() {
+fn main_loop() {
     let mut ctx: Ctx = Ctx::from_file(
         libc::STDIN_FILENO,
         Path::new("./assets/test/passage_wrapped.txt"),
     )
     .unwrap();
     ctx.render();
-    let mut stdin = tokio::io::stdin();
+    let mut stdin = std::io::stdin().lock();
     loop {
-        tokio::select! {
-            Some(token) = input::handle_input(&ctx, &mut stdin) => {
-                ctx.process_action(token);
-                ctx.render();
-            },
+        if let Some(token) = input::handle_input(&ctx, &mut stdin) {
+            ctx.process_action(token);
+            ctx.render();
         };
+        if EXIT_PENDING.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
     }
 }
 
@@ -83,16 +79,7 @@ fn main() -> Result<(), ()> {
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
 
-    let (send, recv) = tokio::sync::oneshot::channel::<()>();
-    *EXIT_CHANNEL.lock().unwrap() = Some(send);
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
-    let local_set = tokio::task::LocalSet::new();
-    {
-        let _lguard = local_set.enter();
-        let _guard = runtime.enter();
-        tokio::task::spawn_local(async {main_loop().await});
-    }
-    runtime.spawn_blocking(|| async move {recv.await.unwrap()});
+    main_loop();
 
     term::flush();
     term::altbuf_disable();
