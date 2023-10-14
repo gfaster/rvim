@@ -1,4 +1,7 @@
+use crate::log;
+use crate::prelude::*;
 use crate::textobj::Motion;
+use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use std::io::stdin;
 use std::io::Read;
@@ -55,17 +58,26 @@ impl From<Operation> for Action {
     }
 }
 
-async fn read_char(reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<char> {
-    char::try_from(reader.read_u8().await.ok()?).ok()
+async fn read_char(reader: &mut (impl AsyncRead + Unpin)) -> Option<char> {
+    let c = char::try_from(reader.read_u8().await.ok()?).ok()?;
+    if c == '\x03' {
+        crate::exit();
+    }
+    log!("read: {c:?}");
+    Some(c)
 }
 
-pub async fn handle_input(ctx: &Ctx, reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<Action> {
+pub async fn handle_input(ctx: &Ctx, reader: &mut (impl AsyncRead + Unpin)) -> Option<Action> {
     match ctx.mode {
         Mode::Normal => syn::parse_normal_command(reader).await,
         Mode::Insert | Mode::Command => Some({
             let c = read_char(reader).await?;
             // log!("{:x}", c as u32);
             match c {
+                '\x03' => {
+                    crate::exit();
+                    return None;
+                },
                 '\x1b' => Action {
                     // escape key, this needs to be more sophisticated for pasting
                     operation: Operation::SwitchMode(Mode::Normal),
@@ -136,26 +148,29 @@ mod syn {
             .into_iter()
             .filter(|d| d.comps[0] == CommComp::Char(first))
             .collect();
-        let mut idx = 1;
+        let mut idx = 0;
         let mut rem = vec![];
-        while defs.len() > 1 {
-            let c = read_char(reader).await?;
-            for (i, CommDef { comps: comp, .. }) in defs.iter().enumerate() {
-                if comp.len() == idx {
-                    return Some(
-                        defs.swap_remove(i)
-                            .action
-                            .motion
-                            .expect("motion has motion"),
-                    );
-                }
-                match &comp[idx] {
-                    CommComp::Char(xc) if c == *xc => (),
+        while !defs.is_empty() {
+            let c = if idx != 0 {
+                read_char(reader).await?
+            } else {
+                first
+            };
+            for (i, CommDef { comps, .. }) in defs.iter().enumerate() {
+                match &comps[idx] {
+                    CommComp::Char(xc) if c == *xc => {
+                        if idx == comps.len() - 1 {
+                            return Some(defs.swap_remove(i).action.motion.expect("motion has motion"));
+                        }
+                    },
                     CommComp::Motion => {
                         panic!("motion token in motion")
                     }
                     _ => rem.push(i),
                 };
+            }
+            if rem.len() == defs.len() {
+                return None;
             }
             for i in rem.iter().rev() {
                 defs.swap_remove(*i);
@@ -163,16 +178,7 @@ mod syn {
             rem.clear();
             idx += 1;
         }
-        match defs.len() {
-            0 => None,
-            1 => Some(
-                defs.swap_remove(0)
-                    .action
-                    .motion
-                    .expect("motion has motion"),
-            ),
-            _ => unreachable!(),
-        }
+        return None;
     }
 
     pub(super) async fn parse_normal_command(reader: &mut (impl AsyncRead + Unpin)) -> Option<super::Action> {
@@ -327,6 +333,13 @@ mod syn {
                     );
                 }
             };
+            ($name:ident, $input:literal => None) => {
+                #[tokio::test]
+                async fn $name() {
+                    let res = parse_normal_command(&mut $input.as_bytes()).await;
+                    assert_eq!(res, None);
+                }
+            };
             ($name:ident, $input:literal => $expected:expr) => {
                 #[tokio::test]
                 async fn $name() {
@@ -341,6 +354,7 @@ mod syn {
         input_test!(single_normal_extra, "iXXXX" => Operation::SwitchMode(Mode::Insert));
         input_test!(single_motion, "h" => Motion::ScreenSpace{ dy: 0, dx: -1 });
         input_test!(single_motion2, "k" => Motion::ScreenSpace{ dy: -1, dx: 0 });
+        input_test!(partial_textobj_not_accept, "ci" => None);
         input_test!(single_with_textobj, "ciw" => 
             match Action { motion: Some(Motion::TextObj(_)), operation: Operation::Change, ..});
         input_test!(single_with_motion, "ch" => 

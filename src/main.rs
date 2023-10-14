@@ -50,8 +50,25 @@ fn exit() {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), ()> {
+async fn main_loop() {
+    let mut ctx: Ctx = Ctx::from_file(
+        libc::STDIN_FILENO,
+        Path::new("./assets/test/passage_wrapped.txt"),
+    )
+    .unwrap();
+    ctx.render();
+    let mut stdin = tokio::io::stdin();
+    loop {
+        tokio::select! {
+            Some(token) = input::handle_input(&ctx, &mut stdin) => {
+                ctx.process_action(token);
+                ctx.render();
+            },
+        };
+    }
+}
+
+fn main() -> Result<(), ()> {
 
     // panic handler is needed because we need to restore the terminal
     unsafe {
@@ -65,38 +82,21 @@ async fn main() -> Result<(), ()> {
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
-    let mut ctx: Ctx = Ctx::from_file(
-        libc::STDIN_FILENO,
-        Path::new("./assets/test/passage_wrapped.txt"),
-    )
-    .unwrap();
-    ctx.render();
 
-    let (send, mut recv) = tokio::sync::oneshot::channel::<()>();
+    let (send, recv) = tokio::sync::oneshot::channel::<()>();
     *EXIT_CHANNEL.lock().unwrap() = Some(send);
-    let mut stdin = tokio::io::stdin();
-
-
-    loop {
-        tokio::select! {
-            Some(token) = input::handle_input(&ctx, &mut stdin) => {
-                ctx.process_action(token);
-                ctx.render();
-            },
-            _ = &mut recv => {
-                break;
-            },
-            // Ok(_) = tokio::signal::ctrl_c() => {
-            //     break;
-            // }
-        };
-        if FALLBACK_EXIT.load(std::sync::atomic::Ordering::Acquire) {
-            break;
-        }
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
+    let local_set = tokio::task::LocalSet::new();
+    {
+        let _lguard = local_set.enter();
+        let _guard = runtime.enter();
+        tokio::task::spawn_local(async {main_loop().await});
     }
+    runtime.spawn_blocking(|| async move {recv.await.unwrap()});
 
     term::flush();
     term::altbuf_disable();
+    println!();
 
     // eprintln!("reached end of main loop");
     if let Some(termios) = unsafe { &ORIGINAL_TERMIOS } {

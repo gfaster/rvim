@@ -94,7 +94,7 @@ impl Ctx {
         let orig = termios.clone();
         termios::cfmakeraw(&mut termios);
         termios.local_flags.remove(LocalFlags::ECHO);
-        // termios.local_flags.insert(LocalFlags::ISIG);
+        termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId::Normal(1);
         let window = Window::new(bufid);
@@ -178,7 +178,7 @@ impl Ctx {
                 self.window.move_cursor(buf, dx, dy)
             }
             Motion::BufferSpace { doff: _ } => todo!(),
-            Motion::TextObj(_) => todo!(),
+            Motion::TextObj(_) => panic!("text objects cannot be move targets"),
             Motion::TextMotion(m) => {
                 let buf = &self.buffers[&self.focused()];
                 let buf_ctx = &mut self.window.buf_ctx;

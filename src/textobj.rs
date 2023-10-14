@@ -217,8 +217,22 @@ pub fn text_object_from_motion(motion: TextMotion, buf: &Buffer, off: DocPos) ->
     }
 }
 
-pub fn inner_word_object(_buf: &Buffer, _pos: DocPos) -> Option<DocRange> {
-    todo!()
+pub fn inner_word_object(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let first = buf.char_at(pos).unwrap();
+    let start = buf
+        .chars_bck(pos)
+        .skip(1)
+        .skip_while(|c| c.1.category() == first.category())
+        .next()?.0;
+    let end = buf
+        .chars_fwd(pos)
+        .skip(1)
+        .skip_while(|c| c.1.category() == first.category())
+        .next()?.0;
+    Some(DocRange {
+        start,
+        end,
+    })
 }
 
 #[cfg(test)]

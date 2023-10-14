@@ -147,6 +147,14 @@ impl super::Buf for SimpleBuffer {
         *ctx = BufCtx::new(ctx.buf_id);
         self.outdated_lines.set(true);
     }
+
+    fn char_at(&self, pos: DocPos) -> Option<char> {
+        let off = self.to_fileoff(pos);
+        if off >= self.data.len() {
+            return None;
+        }
+        self.data[off..].chars().next()
+    }
 }
 
 // helpers

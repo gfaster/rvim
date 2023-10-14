@@ -96,9 +96,10 @@ pub trait Buf: Sized {
     fn path(&self) -> Option<&std::path::Path>;
     fn len(&self) -> usize;
     fn clear(&mut self, ctx: &mut BufCtx);
+    fn char_at(&self, pos: DocPos) -> Option<char>;
 
     fn line(&self, idx: usize) -> &str {
-        self.get_lines(idx..idx)[0]
+        self.get_lines(idx..(idx + 1))[0]
     }
 
     /// push a character onto the end
