@@ -1,5 +1,5 @@
-use std::ops::RangeBounds;
 use crate::prelude::*;
+use std::ops::RangeBounds;
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
@@ -25,7 +25,6 @@ impl DocPos {
         Self::default()
     }
 }
-
 
 #[derive(Debug, Clone, Copy)]
 pub struct DocRange {
@@ -553,7 +552,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("0123456789\nasdf");
         let expected = "012346789\nasdf";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 5, y: 0},
+            cursorpos: DocPos { x: 5, y: 0 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), '5');
@@ -566,7 +565,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("0123456789\nasdf");
         let expected = "0123456789\nsdf";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 0, y: 1},
+            cursorpos: DocPos { x: 0, y: 1 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), 'a');
@@ -579,7 +578,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("0123456789\nasdf");
         let expected = "0123456789asdf";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 10, y: 0},
+            cursorpos: DocPos { x: 10, y: 0 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), '\n');
@@ -592,7 +591,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("\n\n\n");
         let expected = "\n\n";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 0, y: 1},
+            cursorpos: DocPos { x: 0, y: 1 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), '\n');
@@ -605,7 +604,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str("asdf");
         let expected = "sdf";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 0, y: 0},
+            cursorpos: DocPos { x: 0, y: 0 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), 'a');
@@ -618,7 +617,7 @@ pub(crate) mod test {
         let mut buf = Buffer::from_str(" ");
         let expected = "";
         let mut ctx = BufCtx {
-            cursorpos: DocPos { x: 0, y: 0},
+            cursorpos: DocPos { x: 0, y: 0 },
             ..BufCtx::new(BufId::new())
         };
         assert_eq!(buf.delete_char(&mut ctx), ' ');
@@ -649,7 +648,7 @@ pub(crate) mod test {
     fn clear() {
         let mut buf = Buffer::from_str("this is a buffer\nit will be cleared.");
         let mut ctx = BufCtx {
-            cursorpos: DocPos {x: 5, y: 1},
+            cursorpos: DocPos { x: 5, y: 1 },
             ..BufCtx::new(BufId::new())
         };
         buf.clear(&mut ctx);

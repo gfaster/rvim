@@ -6,6 +6,7 @@ use crate::textobj::Motion;
 
 use crate::term;
 use crate::tui::TermGrid;
+use crate::tui::TextSeverity;
 use crate::window::*;
 use crate::{buffer::*, Mode};
 
@@ -18,11 +19,10 @@ use std::os::unix::io::RawFd;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum BufId{
+pub enum BufId {
     Normal(usize),
     Anon(usize),
 }
-
 
 #[cfg(test)]
 impl BufId {
@@ -40,7 +40,8 @@ impl BufId {
     }
 
     pub fn new_anon() -> Self {
-        static ANON_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        static ANON_ID_COUNTER: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         Self::Anon(ANON_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 }
@@ -99,10 +100,16 @@ impl Ctx {
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
-        let components = vec![
-            crate::window::Component::RelLineNumbers(crate::window::RelLineNumbers),
-        ];
-        let window = Window::new_withdim(bufid, term::TermPos { x: 0, y: 0 }, tui.dim().0, tui.dim().1 - 2, components);
+        let components = vec![crate::window::Component::RelLineNumbers(
+            crate::window::RelLineNumbers,
+        )];
+        let window = Window::new_withdim(
+            bufid,
+            term::TermPos { x: 0, y: 0 },
+            tui.dim().0,
+            tui.dim().1 - 2,
+            components,
+        );
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
@@ -144,11 +151,11 @@ impl Ctx {
             Mode::Normal | Mode::Insert => {
                 let tui = self.tui.get_mut();
                 self.window.draw_cursor(tui)
-            },
+            }
             Mode::Command => {
                 let tui = self.tui.get_mut();
                 self.command_line.draw_cursor(tui)
-            },
+            }
         }
 
         let mut stdout = std::io::stdout().lock();
@@ -174,7 +181,28 @@ impl Ctx {
     }
 
     pub fn err(&mut self, err: &(impl std::error::Error + ?Sized)) {
-        self.command_line.write_fmt(format_args!("Error: {}", err)).unwrap();
+        self.command_line.output_severity = TextSeverity::Error;
+        self.command_line
+            .write_fmt(format_args!("Error: {}", err))
+            .unwrap();
+    }
+
+    /// get a handle for info dialogue
+    pub fn info(&mut self) -> &mut impl std::fmt::Write {
+        self.command_line.output_severity = TextSeverity::Normal;
+        &mut self.command_line
+    }
+
+    /// get a handle for warning dialogue
+    pub fn warning(&mut self) -> &mut impl std::fmt::Write {
+        self.command_line.output_severity = TextSeverity::Warning;
+        &mut self.command_line
+    }
+
+    pub fn buffers(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.buffers.iter().filter(|(k, _)| matches!(k, BufId::Normal(_))).map(|(k, v)| {
+            (k.id(), v.name())
+        })
     }
 
     fn apply_motion(&mut self, motion: Motion) {
@@ -242,16 +270,12 @@ impl Ctx {
                 }
                 crate::input::Operation::DeleteBefore => {
                     let buf_ctx = &mut self.window.buf_ctx;
-                    let buf = self.buffers
-                        .get_mut(&buf_ctx.buf_id)
-                        .unwrap();
+                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
                     buf.delete_char_before(buf_ctx);
                 }
                 crate::input::Operation::DeleteAfter => {
                     let buf_ctx = &mut self.window.buf_ctx;
-                    let buf = self.buffers
-                        .get_mut(&buf_ctx.buf_id)
-                        .unwrap();
+                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
                     buf.delete_char(buf_ctx);
                     if buf_ctx.cursorpos.x != 0 {
                         self.window.move_cursor(buf, 1, 0);
@@ -274,6 +298,9 @@ impl Ctx {
                     log!("line: {:?}", lines);
                     log!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
                 }
+                crate::input::Operation::RecenterView => {
+                    self.window.center_view()
+                },
             },
         };
         if let Some(m) = action.post_motion {
@@ -284,6 +311,7 @@ impl Ctx {
 
 impl Drop for Ctx {
     fn drop(&mut self) {
-        termios::tcsetattr(self.term_fd, termios::SetArg::TCSANOW, &self.orig_termios).unwrap_or(());
+        termios::tcsetattr(self.term_fd, termios::SetArg::TCSANOW, &self.orig_termios)
+            .unwrap_or(());
     }
 }

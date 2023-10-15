@@ -1,8 +1,8 @@
-use std::fmt::Write;
 use lazy_regex::regex;
+use std::fmt::Write;
 use std::ops::Range;
 
-use crate::{debug::log, prelude::*};
+use crate::{debug::log, prelude::*, tui::TextSeverity};
 
 use super::{cmdline::CommandLine, Command};
 
@@ -22,6 +22,7 @@ enum TokenKind {
     Number,
     Ident,
     Path,
+    Colon,
 }
 
 impl<'a> Lexer<'a> {
@@ -68,15 +69,12 @@ impl<'a> Lexer<'a> {
         }
         for kind in TokenKindList::difference(kinds) {
             if self.try_next_expect(kind).is_ok() {
-                writeln!(
-                    diag,
-                    "Expected {} but found {}",
-                    TokenKindList(kinds),
-                    kind
-                ).unwrap();
+                diag.output_severity = TextSeverity::Error;
+                writeln!(diag, "Expected {} but found {}", TokenKindList(kinds), kind).unwrap();
                 return None;
             }
         }
+        diag.output_severity = TextSeverity::Error;
         write!(diag, "Expected {} but found EOL", TokenKindList(kinds)).unwrap();
         return None;
     }
@@ -86,9 +84,14 @@ struct TokenKindList<'a>(&'a [TokenKind]);
 
 impl TokenKindList<'_> {
     fn difference(remove: &[TokenKind]) -> impl IntoIterator<Item = TokenKind> + '_ {
-        [TokenKind::Ident, TokenKind::Number, TokenKind::Path]
-            .into_iter()
-            .filter(|k| !remove.contains(k))
+        [
+            TokenKind::Ident,
+            TokenKind::Number,
+            TokenKind::Colon,
+            TokenKind::Path,
+        ]
+        .into_iter()
+        .filter(|k| !remove.contains(k))
     }
 }
 
@@ -113,6 +116,7 @@ impl TokenKind {
             TokenKind::Number => regex!(r#"^[1-9][\d]*"#),
             TokenKind::Ident => regex!(r#"^[[:alpha:]][[:alpha:]0-9]*"#),
             TokenKind::Path => regex!(r#"^(?:[^ !$`&*()+]|(?:\\[ !$`&*()+]))+"#),
+            TokenKind::Colon => regex!(r#"^:"#),
         }
     }
 }
@@ -123,6 +127,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Number => "`number`",
             TokenKind::Ident => "`identifier`",
             TokenKind::Path => "`path`",
+            TokenKind::Colon => "`:`",
         };
         f.write_str(s)
     }
@@ -141,7 +146,12 @@ pub fn parse_command(s: &str, diag: &mut CommandLine) -> Option<Command> {
         "e" | "edit" => Command::Edit {
             path: args.next_expects(diag, &[TokenKind::Path])?.data.into(),
         },
+        "ls" | "buffers" => Command::ListBuffers,
+        "s" | "su" => Command::Substitute,
+        "g" | "global" => Command::Global,
+        "h" | "help" => Command::Help,
         unknown => {
+            diag.output_severity = TextSeverity::Error;
             write!(diag, "Unknown command: {unknown:?}").unwrap();
             return None;
         }

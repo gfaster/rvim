@@ -1,5 +1,8 @@
-use std::{ops::{RangeInclusive, Range, RangeBounds}, fmt::Write};
-use crate::{prelude::*, debug::log};
+use crate::{debug::log, prelude::*};
+use std::{
+    fmt::Write,
+    ops::{Range, RangeBounds, RangeInclusive},
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Ord)]
 pub struct TermPos {
@@ -20,7 +23,7 @@ impl TermPos {
 /// shorthand for term pos (x, y)
 macro_rules! tp {
     ($x:expr, $y:expr) => {
-        TermPos{ x: $x, y: $y}
+        TermPos { x: $x, y: $y }
     };
 }
 
@@ -34,7 +37,6 @@ impl PartialOrd for TermPos {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TermBox {
@@ -53,10 +55,10 @@ impl std::ops::RangeBounds<TermPos> for TermBox {
 }
 
 impl TermBox {
-    pub const fn xrng (&self) -> RangeInclusive<u32> {
+    pub const fn xrng(&self) -> RangeInclusive<u32> {
         self.start.x..=self.end.x
     }
-    pub const fn yrng (&self) -> RangeInclusive<u32> {
+    pub const fn yrng(&self) -> RangeInclusive<u32> {
         self.start.y..=self.end.y
     }
 
@@ -70,12 +72,12 @@ impl TermBox {
         self.end.y - self.start.y + 1
     }
 
-    fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32> ) -> Self {
+    fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32>) -> Self {
         let xrng = TermGrid::rangebounds_to_range(xrng);
         let yrng = TermGrid::rangebounds_to_range(yrng);
         Self {
             start: tp!(xrng.start, yrng.start),
-            end: tp!(xrng.end - 1, yrng.end - 1)
+            end: tp!(xrng.end - 1, yrng.end - 1),
         }
     }
 
@@ -86,8 +88,9 @@ impl TermBox {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BasicColor {
+    #[default]
     Default,
     Black,
     Red,
@@ -104,7 +107,26 @@ pub enum BasicColor {
     BrightBlue,
     BrightMagenta,
     BrightCyan,
-    BrightWhite
+    BrightWhite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextSeverity {
+    #[default]
+    Normal,
+    Warning,
+    Error,
+}
+
+impl TextSeverity {
+    pub const fn color(&self) -> Color {
+        let fg = match self {
+            TextSeverity::Normal => BasicColor::Default,
+            TextSeverity::Warning => BasicColor::Yellow,
+            TextSeverity::Error => BasicColor::Red,
+        };
+        Color { fg, ..Color::new() }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +137,7 @@ pub struct Color {
 }
 
 impl Color {
-    pub const fn new() -> Self  {
+    pub const fn new() -> Self {
         Self {
             bold: false,
             fg: BasicColor::Default,
@@ -205,7 +227,10 @@ impl Default for TermCell {
 
 impl From<char> for TermCell {
     fn from(value: char) -> Self {
-        TermCell { color: Color::default(), content: Some(value) }
+        TermCell {
+            color: Color::default(),
+            content: Some(value),
+        }
     }
 }
 
@@ -238,7 +263,12 @@ impl std::ops::IndexMut<TermPos> for TermGrid {
 
 impl TermGrid {
     pub fn new() -> Self {
-        let mut out = Self { w: 0, h: 0, cells: Vec::new(), cursorpos: tp!(0, 0) };
+        let mut out = Self {
+            w: 0,
+            h: 0,
+            cells: Vec::new(),
+            cursorpos: tp!(0, 0),
+        };
         out.resize_auto();
         out
     }
@@ -265,9 +295,10 @@ impl TermGrid {
         true
     }
 
-    /// resize the grid to fit the terminal, returns true if resize occurred. 
+    /// resize the grid to fit the terminal, returns true if resize occurred.
     pub fn resize_auto(&mut self) -> bool {
-        let (w, h) = terminal_size::terminal_size().map_or((80, 40), |(w, h)| (w.0 as u32, h.0 as u32));
+        let (w, h) =
+            terminal_size::terminal_size().map_or((80, 40), |(w, h)| (w.0 as u32, h.0 as u32));
         self.resize(w, h)
     }
 
@@ -292,9 +323,13 @@ impl TermGrid {
 
     fn rangebounds_to_range(range: impl RangeBounds<u32>) -> Range<u32> {
         match (range.start_bound(), range.end_bound()) {
-            (std::ops::Bound::Included(start), std::ops::Bound::Included(end)) => *start..(*end + 1),
+            (std::ops::Bound::Included(start), std::ops::Bound::Included(end)) => {
+                *start..(*end + 1)
+            }
             (std::ops::Bound::Included(start), std::ops::Bound::Excluded(end)) => *start..*end,
-            (std::ops::Bound::Unbounded, _) | (_, std::ops::Bound::Unbounded) => panic!("needs bounds"),
+            (std::ops::Bound::Unbounded, _) | (_, std::ops::Bound::Unbounded) => {
+                panic!("needs bounds")
+            }
             (std::ops::Bound::Excluded(_), _) => panic!("no excluded start"),
         }
     }
@@ -313,22 +348,32 @@ impl TermGrid {
         start..end
     }
 
-    pub fn write_line(&mut self, y: u32, xrng: impl RangeBounds<u32>, color: Color, content: &str) -> usize {
+    pub fn write_line(
+        &mut self,
+        y: u32,
+        xrng: impl RangeBounds<u32>,
+        color: Color,
+        content: &str,
+    ) -> usize {
         let mut cnt = 0;
-        let xrng = Self::rangebounds_to_range(xrng);
+        let xrng = self.normalize_xrng(xrng);
         let mut last = xrng.start;
         for (c, x) in content.chars().zip(xrng.clone()) {
             last = x;
             if c == '\n' {
                 break;
             }
-            self.put_cell(tp!(x, y), TermCell {
-                color,
-                content: Some(c),
-            });
+            self.put_cell(
+                tp!(x, y),
+                TermCell {
+                    color,
+                    content: Some(c),
+                },
+            );
+            last += 1;
             cnt += 1;
-        };
-        let rng = self.line_rng(y, (last + 1)..xrng.end);
+        }
+        let rng = self.line_rng(y, last..xrng.end);
         // log!("{content:?} => {} - {}", xrng.len() , rng.len());
         self.cells[rng].fill(TermCell::new());
         cnt
@@ -336,7 +381,10 @@ impl TermGrid {
 
     pub fn line_bounds(&self, y: u32) -> TermBox {
         assert!(y < self.h);
-        TermBox { start: tp!(0, y), end: tp!(self.w - 1, y) }
+        TermBox {
+            start: tp!(0, y),
+            end: tp!(self.w - 1, y),
+        }
     }
 
     pub fn write_box(&mut self, bounds: TermBox, color: Color, content: &str) -> usize {
@@ -365,12 +413,22 @@ impl TermGrid {
                 continue;
             };
             let color = cell.color;
-            match (color.fg == curr.fg, color.bg == curr.bg, color.bold == curr.bold) {
+            match (
+                color.fg == curr.fg,
+                color.bg == curr.bg,
+                color.bold == curr.bold,
+            ) {
                 (true, true, true) => (),
                 (true, true, false) => write!(render_buf, "\x1b[{}m", color.bold())?,
                 (false, true, true) => write!(render_buf, "\x1b[{}m", color.fg())?,
                 (true, false, true) => write!(render_buf, "\x1b[{}m", color.bg())?,
-                _ => write!(render_buf, "\x1b[{};{};{}m", color.fg(), color.bg(), color.bold())?,
+                _ => write!(
+                    render_buf,
+                    "\x1b[{};{};{}m",
+                    color.fg(),
+                    color.bg(),
+                    color.bold()
+                )?,
             }
             curr = color;
             write!(render_buf, "{}", content)?;
@@ -378,14 +436,24 @@ impl TermGrid {
         // show the cursor and go to expected cursor position
         write!(render_buf, "\x1b[25h")?;
         // write!(dest, "X")?;
-        write!(render_buf, "\x1b[{};{}H", self.cursorpos.row(), self.cursorpos.col())?;
+        write!(
+            render_buf,
+            "\x1b[{};{}H",
+            self.cursorpos.row(),
+            self.cursorpos.col()
+        )?;
         dest.write_all(&render_buf)?;
         dest.flush()?;
         Ok(())
     }
 
     pub fn refbox(&mut self, bounds: TermBox) -> TermGridBox {
-        TermGridBox { grid: self, color: Color::new(), range: bounds, cursor: tp!(0, 0) }
+        TermGridBox {
+            grid: self,
+            color: Color::new(),
+            range: bounds,
+            cursor: tp!(0, 0),
+        }
     }
 
     pub fn refline(&mut self, y: u32, xrng: impl RangeBounds<u32>) -> TermGridBox {
@@ -393,7 +461,12 @@ impl TermGrid {
         assert!(y < self.h);
         assert!(xrng.end <= self.w);
         let bounds = TermBox::from_ranges(xrng, y..=y);
-        TermGridBox { grid: self, color: Color::new(), range: bounds, cursor: tp!(0, 0) }
+        TermGridBox {
+            grid: self,
+            color: Color::new(),
+            range: bounds,
+            cursor: tp!(0, 0),
+        }
     }
 
     pub fn set_cursorpos(&mut self, pos: TermPos) {
@@ -402,7 +475,6 @@ impl TermGrid {
         self.cursorpos = pos;
     }
 }
-
 
 pub struct TermGridBox<'a> {
     grid: &'a mut TermGrid,
@@ -414,10 +486,7 @@ pub struct TermGridBox<'a> {
 impl TermGridBox<'_> {
     #[must_use = "colored does not mutate"]
     pub const fn colored(self, color: Color) -> Self {
-        Self {
-            color,
-            ..self
-        }
+        Self { color, ..self }
     }
 
     pub fn set_color(&mut self, color: Color) -> &mut Self {
@@ -442,7 +511,7 @@ impl Write for TermGridBox<'_> {
                 self.cursor.y += 1;
             }
             if y > self.range.end.y {
-                return Err(std::fmt::Error)
+                return Err(std::fmt::Error);
             }
             if c == '\n' {
                 let rng = self.grid.line_rng(y, x..=self.range.end.x);
@@ -453,10 +522,13 @@ impl Write for TermGridBox<'_> {
                 self.cursor.y += 1;
                 continue;
             }
-            self.grid.put_cell(tp!(x, y), TermCell {
-                color: self.color,
-                content: Some(c),
-            });
+            self.grid.put_cell(
+                tp!(x, y),
+                TermCell {
+                    color: self.color,
+                    content: Some(c),
+                },
+            );
             x += 1;
             self.cursor.x += 1;
         }

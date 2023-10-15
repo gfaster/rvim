@@ -6,8 +6,8 @@ mod input;
 mod prelude;
 mod render;
 mod term;
-mod tui;
 mod textobj;
+mod tui;
 mod window;
 use prelude::*;
 
@@ -66,7 +66,6 @@ fn main_loop() {
 }
 
 fn main() -> Result<(), ()> {
-
     // panic handler is needed because we need to restore the terminal
     unsafe {
         ORIGINAL_TERMIOS = Some(termios::tcgetattr(STDIN_FILENO).unwrap());

@@ -1,8 +1,9 @@
 use crate::{debug::log, prelude::*};
 use std::{
     cell::{Cell, RefCell},
+    default,
     os::unix::prelude::OsStrExt,
-    path::{Path, PathBuf}, default,
+    path::{Path, PathBuf},
 };
 
 use super::{Buf, DocPos};
@@ -61,6 +62,9 @@ impl super::Buf for SimpleBuffer {
     fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str> {
         let mut out = Vec::with_capacity(lines.len());
         let line_nums = self.line_nums();
+        if line_nums.len() == 0 {
+            return Vec::new()
+        }
         let mut it = line_nums[lines.clone()].iter().peekable();
         while let Some(&start) = it.next() {
             let &end = it

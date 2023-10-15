@@ -1,9 +1,10 @@
-use std::fmt::Write;
 use crate::debug::log;
 use crate::prelude::*;
+use std::fmt::Write;
 
 use crate::render::BufId;
 use crate::term::TermPos;
+use crate::tui::TextSeverity;
 use crate::window::Component;
 use crate::{term, window::Window};
 
@@ -34,6 +35,7 @@ pub struct CommandLine {
     other_ctx: BufCtx,
     window: Window,
     output_buf: Buffer,
+    pub output_severity: crate::tui::TextSeverity,
 }
 
 macro_rules! out_ctx {
@@ -68,11 +70,18 @@ impl CommandLine {
                 self.window.draw_buf(ctx, &self.input_buf);
                 let mut tui = ctx.tui.borrow_mut();
                 let (_, h) = tui.dim();
-                tui.set_cursorpos(TermPos {x: self.input_buf.len() as u32 + 1, y: h as u32 - 1});
+                tui.set_cursorpos(TermPos {
+                    x: self.input_buf.len() as u32 + 1,
+                    y: h as u32 - 1,
+                });
             }
             CommandLineMode::Output => {
                 if self.output_buf.len() > 0 {
-                    self.window.draw_buf(ctx, &self.output_buf);
+                    self.window.draw_buf_colored(
+                        ctx,
+                        &self.output_buf,
+                        self.output_severity.color(),
+                    );
                 } else {
                     self.window.draw_buf(ctx, &self.input_buf);
                 }
@@ -86,7 +95,6 @@ impl CommandLine {
             tui.set_cursorpos(self.window.cursorpos());
         }
     }
-
 
     pub fn input(&mut self, input: CommandLineInput) {
         self.set_mode(CommandLineMode::Input);
@@ -105,7 +113,8 @@ impl CommandLine {
             std::mem::swap(&mut self.other_ctx, &mut self.window.buf_ctx);
             self.mode = mode;
             if mode == CommandLineMode::Input {
-                self.output_buf.clear(out_ctx!(self))
+                self.output_buf.clear(out_ctx!(self));
+                self.output_severity = TextSeverity::Normal;
             }
         }
     }
@@ -134,6 +143,7 @@ impl CommandLine {
     pub fn clear_all(&mut self) {
         self.clear_command();
         self.output_buf.clear(out_ctx!(self));
+        self.output_severity = TextSeverity::Normal;
     }
 
     pub fn clear_command(&mut self) {
@@ -145,7 +155,7 @@ impl CommandLine {
         let (w, h) = tui.dim();
         let components = vec![
             Component::StatusLine(crate::window::StatusLine),
-            Component::CommandPrefix(crate::window::CommandPrefix)
+            Component::CommandPrefix(crate::window::CommandPrefix),
         ];
         Self {
             mode: CommandLineMode::Output,
@@ -153,7 +163,14 @@ impl CommandLine {
             other_ctx: BufCtx::new_anon(),
             typ: CommandType::None,
             output_buf: Buffer::new(),
-            window: Window::new_withdim(BufId::new_anon(), TermPos { x: 0, y: h - 2 }, w, 2, components),
+            window: Window::new_withdim(
+                BufId::new_anon(),
+                TermPos { x: 0, y: h - 2 },
+                w,
+                2,
+                components,
+            ),
+            output_severity: Default::default(),
         }
     }
 

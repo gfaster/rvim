@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use std::fmt::Write;
 use std::{io::stdout, sync::Mutex};
 
-
 pub fn altbuf_enable() {
     print!("\x1b[?1049h");
 }

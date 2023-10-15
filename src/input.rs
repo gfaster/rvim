@@ -15,6 +15,7 @@ pub enum Operation {
     DeleteBefore,
     DeleteAfter,
     SwitchMode(Mode),
+    RecenterView,
     Debug,
     None,
 }
@@ -78,7 +79,7 @@ pub fn handle_input(ctx: &Ctx, reader: &mut impl Read) -> Option<Action> {
                 '\x03' => {
                     crate::exit();
                     return None;
-                },
+                }
                 '\x1b' => Action {
                     // escape key, this needs to be more sophisticated for pasting
                     operation: Operation::SwitchMode(Mode::Normal),
@@ -151,18 +152,19 @@ mod syn {
         let mut idx = 0;
         let mut rem = vec![];
         while !defs.is_empty() {
-            let c = if idx != 0 {
-                read_char(reader)?
-            } else {
-                first
-            };
+            let c = if idx != 0 { read_char(reader)? } else { first };
             for (i, CommDef { comps, .. }) in defs.iter().enumerate() {
                 match &comps[idx] {
                     CommComp::Char(xc) if c == *xc => {
                         if idx == comps.len() - 1 {
-                            return Some(defs.swap_remove(i).action.motion.expect("motion has motion"));
+                            return Some(
+                                defs.swap_remove(i)
+                                    .action
+                                    .motion
+                                    .expect("motion has motion"),
+                            );
                         }
-                    },
+                    }
                     CommComp::Motion => {
                         panic!("motion token in motion")
                     }
@@ -303,6 +305,8 @@ mod syn {
         down: Motion = ('j') => Motion::ScreenSpace { dy: 1, dx: 0 },
         up: Motion = ('k') => Motion::ScreenSpace { dy: -1, dx: 0 },
         right: Motion = ('l') => Motion::ScreenSpace { dy: 0, dx: 1 },
+
+        recenter: Normal = ('z' 'z') => Operation::RecenterView,
 
         inner_word: TextObject = ('i' 'w') => Motion::TextObj(textobj::inner_word_object),
 

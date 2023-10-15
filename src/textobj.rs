@@ -223,16 +223,15 @@ pub fn inner_word_object(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
         .chars_bck(pos)
         .skip(1)
         .skip_while(|c| c.1.category() == first.category())
-        .next()?.0;
+        .next()?
+        .0;
     let end = buf
         .chars_fwd(pos)
         .skip(1)
         .skip_while(|c| c.1.category() == first.category())
-        .next()?.0;
-    Some(DocRange {
-        start,
-        end,
-    })
+        .next()?
+        .0;
+    Some(DocRange { start, end })
 }
 
 #[cfg(test)]
