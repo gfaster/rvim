@@ -2,7 +2,6 @@ use std::fmt::Write;
 use crate::debug::log;
 use crate::prelude::*;
 use crate::render::BufId;
-use crate::screen_write;
 use crate::tui::TermBox;
 
 use crate::buffer::Buffer;
@@ -29,7 +28,7 @@ use unicode_truncate::UnicodeTruncateStr;
 /// Adhearing to Rust conventions for this will be challenging I want each Buffer to be referenced
 /// by multiple BufCtx, and to be mutated by multiple BufCtx. I think this should be done by making
 /// BufCtx only interact with Buffers when the BufCtx functions are called.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct BufCtx {
     pub buf_id: BufId,
 
@@ -43,13 +42,14 @@ pub struct BufCtx {
 }
 
 impl BufCtx {
-    pub fn win_pos(&self, _win: &Window) -> TermPos {
+    pub fn win_pos(&self, win: &Window) -> TermPos {
         let y = self
             .cursorpos
             .y
             .checked_sub(self.topline)
             .expect("tried to move cursor above window") as u32;
-        let x = self.cursorpos.x as u32;
+        let y = y + win.bounds.start.y;
+        let x = self.cursorpos.x as u32 + win.bounds.start.x;
         TermPos { x, y }
     }
 
@@ -57,7 +57,7 @@ impl BufCtx {
     pub fn draw(&self, win: &Window, ctx: &Ctx) {
         let mut tui = ctx.tui.borrow_mut();
         let buf = ctx.getbuf(self.buf_id).unwrap();
-        write!(tui.refbox(win.bounds), "{}", buf).unwrap();
+        let _ = write!(tui.refbox(win.bounds), "{}", buf);
     }
 
     pub fn new(buf: BufId) -> Self {
@@ -74,7 +74,7 @@ impl BufCtx {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Padding {
     top: u32,
     bottom: u32,
@@ -85,7 +85,7 @@ struct Padding {
 #[enum_dispatch]
 trait DispComponent {
     /// write the component
-    fn draw(&self, win: &Window, ctx: &Ctx);
+    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx);
 
     /// amount of padding needed left, top, bottom, right
     fn padding(&self) -> Padding;
@@ -96,34 +96,38 @@ pub enum Component {
     RelLineNumbers,
     StatusLine,
     Welcome,
+    CommandPrefix,
 }
 
 
 pub struct RelLineNumbers;
 impl DispComponent for RelLineNumbers {
-    fn draw(&self, win: &Window, ctx: &Ctx) {
-        let linecnt = ctx.getbuf(win.buf_ctx.buf_id).unwrap().linecnt();
+    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
+        let linecnt = buffer.linecnt();
         let y = win.cursorpos().y;
         let mut tui = ctx.tui.borrow_mut();
 
         for l in 0..win.height() {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
 
-            let mut target = tui.refline(winbase.y, winbase.x..(winbase.x + 5)).colored(Color {
+            let mut target = tui.refline(winbase.y, (winbase.x - 5)..(winbase.x)).colored(Color {
                 fg: BasicColor::Green,
                 ..Color::new()
             });
 
+            // write!(target, "X").unwrap();
+                // continue;
+
             if l == y {
                 write!(
                     target,
-                    "{: >3} ",
+                    " {:<3} ",
                     l as usize + win.buf_ctx.topline + 1
                 ).unwrap();
             } else if l as usize + win.buf_ctx.topline < linecnt {
-                write!(target, "{:4}", y.abs_diff(l)).unwrap();
+                write!(target, "{:>4} ", y.abs_diff(l)).unwrap();
             } else {
-                write!(target, "{:4}", ' ').unwrap();
+                write!(target, "{:5}", ' ').unwrap();
             }
         }
     }
@@ -140,7 +144,7 @@ impl DispComponent for RelLineNumbers {
 
 pub struct Welcome;
 impl DispComponent for Welcome {
-    fn draw(&self, win: &Window, ctx: &Ctx) {
+    fn draw(&self, win: &Window, _buffer: &Buffer, ctx: &Ctx) {
         if !win.dirty {
             let s = include_str!("../assets/welcome.txt");
             let top = (win.height() - s.lines().count() as u32) / 2;
@@ -148,7 +152,8 @@ impl DispComponent for Welcome {
             s.lines()
                 .enumerate()
                 .map(|(idx, line)| {
-                    write!(target.refline(top + idx as u32, ..), "{:^w$}", line, w = win.width() as usize).unwrap();
+                    let mut refline = target.refline(top + idx as u32, ..);
+                    write!(refline, "{:^w$}", line, w = win.width() as usize).unwrap();
                 })
                 .last();
         }
@@ -164,25 +169,49 @@ impl DispComponent for Welcome {
     }
 }
 
+pub struct CommandPrefix;
+impl DispComponent for CommandPrefix {
+    fn draw(&self, win: &Window, _buffer: &Buffer, ctx: &Ctx) {
+        use crate::command::cmdline::CommandType;
+        let base = win.reltoabs(TermPos {
+            x: 0,
+            y: 0,
+        });
+        let lead = match ctx.cmdtype() {
+            CommandType::Ex => ':',
+            CommandType::None => ' ',
+            CommandType::Find => '/',
+        };
+
+        let mut target = ctx.tui.borrow_mut();
+        target.put_cell(TermPos {x: base.x - 1, y: base.y}, lead);
+    }
+
+    fn padding(&self) -> Padding {
+        Padding {
+            top: 0,
+            bottom: 0,
+            left: 1,
+            right: 0,
+        }
+    }
+}
+
 pub struct StatusLine;
 impl DispComponent for StatusLine {
     fn padding(&self) -> Padding {
         Padding {
-            top: 0,
-            bottom: 1,
+            top: 1,
+            bottom: 0,
             left: 0,
             right: 0,
         }
     }
 
-    fn draw(&self, win: &Window, ctx: &Ctx) {
+    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
         let base = win.reltoabs(TermPos {
             x: 0,
-            y: win.height(),
-        });
-        term::goto(TermPos {
-            x: base.x - win.padding.left,
-            y: base.y + 0,
+            y: 0,
         });
 
         let (color, mode_str) = match ctx.mode {
@@ -191,17 +220,14 @@ impl DispComponent for StatusLine {
             crate::Mode::Command => (Color {fg: BasicColor::Black, bg: BasicColor::Blue, bold: true}, " COMMAND "),
         };
         let mut target = ctx.tui.borrow_mut();
-        let y = base.y;
-        let end = mode_str.len() as u32;
         let w = target.dim().0;
-        write!(target.refline(y, 0..end).colored(color), "{mode_str}").unwrap();
-        let start = end;
-        let name = ctx.getbuf(win.buf_ctx.buf_id).unwrap().name();
-        let end = end + name.len() as u32 + 1;
-        write!(target.refline(y, start..end).colored(Color { bg: BasicColor::Black, ..Color::default() }), " {name}").unwrap();
-        let start = end;
-        write!(target.refline(y, start..).colored(Color { bg: BasicColor::Black, ..Color::default()
-        }), "{:x$}", "", x=w as usize).unwrap();
+        let y = base.y - 1;
+        let mut refline = target.refline(y, ..).colored(color);
+        write!(refline, "{mode_str}").unwrap();
+        let name = buffer.name();
+        refline.set_color(Color { bg: BasicColor::Black, ..Color::default() });
+        write!(refline, " {name}").unwrap();
+        let _ = write!(refline, "{:x$}", "", x=w as usize);
     }
 }
 
@@ -223,10 +249,6 @@ impl Window {
     }
 
     pub fn new_withdim(buf: BufId, topleft: TermPos, width: u32, height: u32, mut components: Vec<Component>) -> Self {
-        // let mut components = vec![
-        //     Component::RelLineNumbers(RelLineNumbers),
-        //     Component::StatusLine(StatusLine),
-        // ];
         let dirty = true;
         if !dirty {
             components.push(Component::Welcome(Welcome));
@@ -249,7 +271,7 @@ impl Window {
                 }
             },
         );
-        Self {
+        let out = Self {
             buf_ctx: BufCtx::new(buf),
             bounds: TermBox { 
                 start: TermPos {
@@ -257,14 +279,28 @@ impl Window {
                     y: topleft.y + padding.top,
                 },
                 end: TermPos {
-                    x: width - padding.right - 1,
-                    y: height - padding.bottom - 1,
+                    x: topleft.x + width - padding.right - 1,
+                    y: topleft.y + height - padding.bottom - 1,
                 },
             },
             components,
             padding,
             dirty,
-        }
+        };
+        out.bounds.assert_valid();
+        out
+    }
+
+    fn real_bounds(&self) -> TermBox {
+        let start = TermPos {
+            x: self.bounds.start.x - self.padding.left,
+            y: self.bounds.start.y - self.padding.top,
+        };
+        let end = TermPos {
+            x: self.bounds.end.x + self.padding.right,
+            y: self.bounds.end.y + self.padding.bottom,
+        };
+        TermBox { start, end }
     }
 
     /// probably don't want to use this since it erases padding
@@ -278,14 +314,43 @@ impl Window {
         let h = newy - self.padding.top - self.padding.bottom;
         self.bounds.end.x = self.bounds.start.x + w - 1;
         self.bounds.end.y = self.bounds.start.y + h - 1;
+        self.bounds.assert_valid();
+    }
+
+    /// clamp the window to the screen, moving the window and also shrinking if necessary.
+    pub fn clamp_to_screen(&mut self, tui: &TermGrid) {
+        let (tw, th) = tui.dim();
+        let real = self.real_bounds();
+        let w = real.xlen().min(tw);
+        let h = real.ylen().min(th);
+        // std::thread::sleep(std::time::Duration::from_secs(10));
+        self.set_size_padded(w, h);
+        if real.end.x >= tw {
+            let diff = (real.end.x - tw) + 1;
+            self.bounds.end.x -= diff;
+            self.bounds.start.x -= diff;
+        }
+        if real.end.y >= th {
+            let diff = (real.end.y - th) + 1;
+            self.bounds.end.y -= diff;
+            self.bounds.start.y -= diff;
+        }
+    }
+
+    /// snap the window to the bottom of the screen
+    pub fn snap_to_bottom(&mut self, tui: &TermGrid) {
+        let (_, h) = tui.dim();
+        self.bounds.start.y += h;
+        self.bounds.end.y += h;
+        self.clamp_to_screen(tui);
     }
 
     pub fn width(&self) -> u32 {
-        self.bounds.end.x - self.bounds.start.x
+        self.bounds.xlen()
     }
 
     pub fn height(&self) -> u32 {
-        self.bounds.end.y - self.bounds.start.y
+        self.bounds.ylen()
     }
 
     fn reltoabs(&self, pos: TermPos) -> TermPos {
@@ -297,10 +362,26 @@ impl Window {
 
     pub fn draw(&self, ctx: &Ctx) {
         // log!("height: {}", self.height());
-        term::rst_cur();
-        self.buf_ctx.draw(self, ctx);
-        self.components.iter().map(|x| x.draw(self, ctx)).last();
-        term::goto(self.reltoabs(self.buf_ctx.win_pos(self)));
+        let buf = ctx.getbuf(self.buf_ctx.buf_id).unwrap();
+        self.draw_buf(ctx, buf);
+    }
+
+    pub fn draw_buf(&self, ctx: &Ctx, buf: &Buffer) {
+        {
+            let mut tui = ctx.tui.borrow_mut();
+            // log!("{:?}", self.bounds);
+            let mut refbox = tui.refbox(self.bounds);
+            let _ = write!(refbox, "{:len$}", buf, len = refbox.cell_cnt() as usize);
+            tui.set_cursorpos(self.cursorpos());
+        }
+        self.components.iter().for_each(|x| x.draw(self, &buf, ctx));
+        if ctx.focused() == self.buf_ctx.buf_id {
+            ctx.tui.borrow_mut().set_cursorpos(self.reltoabs(self.buf_ctx.win_pos(self)))
+        }
+    }
+
+    pub fn draw_cursor(&self, tui: &mut TermGrid) {
+        tui.set_cursorpos(self.cursorpos());
     }
 
     pub fn cursorpos(&self) -> TermPos {

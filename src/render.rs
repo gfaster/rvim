@@ -2,7 +2,6 @@ use crate::command::cmdline::CommandLine;
 use crate::command::cmdline::CommandLineInput;
 use crate::debug::log;
 use crate::input::Action;
-use crate::screen_write;
 use crate::textobj::Motion;
 
 use crate::term;
@@ -18,7 +17,7 @@ use std::fmt::Write;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BufId{
     Normal(usize),
     Anon(usize),
@@ -100,7 +99,10 @@ impl Ctx {
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
-        let window = Window::new(bufid, &tui);
+        let components = vec![
+            crate::window::Component::RelLineNumbers(crate::window::RelLineNumbers),
+        ];
+        let window = Window::new_withdim(bufid, term::TermPos { x: 0, y: 0 }, tui.dim().0, tui.dim().1 - 2, components);
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
@@ -122,27 +124,35 @@ impl Ctx {
         self.buffers.get(&buf)
     }
 
+    pub fn cmdtype(&self) -> crate::command::cmdline::CommandType {
+        self.command_line.get_type()
+    }
+
     pub fn render(&mut self) {
         {
             let tui = self.tui.get_mut();
             if tui.resize_auto() {
+                self.command_line.resize(tui);
                 self.window.set_size_padded(tui.dim().0, tui.dim().1);
             }
         }
+
+        let _ = self.command_line.render(self);
+        self.window.draw(self);
+
         match self.mode {
+            Mode::Normal | Mode::Insert => {
+                let tui = self.tui.get_mut();
+                self.window.draw_cursor(tui)
+            },
             Mode::Command => {
-                self.window.draw(self);
                 let tui = self.tui.get_mut();
-                let _ = self.command_line.render(tui);
-            }
-            _ => {
-                let tui = self.tui.get_mut();
-                let _ = self.command_line.render(tui);
-                self.window.draw(self);
-            }
+                self.command_line.draw_cursor(tui)
+            },
         }
-        let mut stdin = std::io::stdout().lock();
-        self.tui.get_mut().render(&mut stdin).unwrap();
+
+        let mut stdout = std::io::stdout().lock();
+        self.tui.get_mut().render(&mut stdout).unwrap();
     }
 
     pub fn focused(&self) -> BufId {
@@ -191,7 +201,6 @@ impl Ctx {
         if let Some(m) = action.motion {
             self.apply_motion(m)
         }
-        let tui = self.tui.get_mut();
         match self.mode {
             Mode::Command => match action.operation {
                 crate::input::Operation::Insert(s) => {
@@ -203,18 +212,18 @@ impl Ctx {
                             .map(|r| r.map_err(|e| self.err(&*e)));
                         self.mode = Mode::Normal;
                     } else {
-                        let _ = self.command_line.input(tui, CommandLineInput::Append(c));
+                        let _ = self.command_line.input(CommandLineInput::Append(c));
                     }
                 }
                 crate::input::Operation::DeleteBefore => {
-                    let _ = self.command_line.input(tui, CommandLineInput::Delete);
+                    let _ = self.command_line.input(CommandLineInput::Delete);
                 }
                 crate::input::Operation::DeleteAfter => {
                     panic!("only backspace is implemented for command line")
                     // self.command_line.input(CommandLineInput::Delete)
                 }
                 crate::input::Operation::SwitchMode(m) => {
-                    if !matches!(m, Mode::Command) {
+                    if m != Mode::Command {
                         self.command_line.clear_command();
                     }
                     self.mode = m
@@ -230,7 +239,6 @@ impl Ctx {
                     let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
                     buf.insert_str(buf_ctx, c.replace('\r', "\n").as_str());
                     self.window.fit_ctx_frame();
-                    self.window.draw(self);
                 }
                 crate::input::Operation::DeleteBefore => {
                     let buf_ctx = &mut self.window.buf_ctx;
@@ -238,7 +246,6 @@ impl Ctx {
                         .get_mut(&buf_ctx.buf_id)
                         .unwrap();
                     buf.delete_char_before(buf_ctx);
-                    self.window.draw(self);
                 }
                 crate::input::Operation::DeleteAfter => {
                     let buf_ctx = &mut self.window.buf_ctx;
@@ -249,7 +256,6 @@ impl Ctx {
                     if buf_ctx.cursorpos.x != 0 {
                         self.window.move_cursor(buf, 1, 0);
                     }
-                    self.window.draw(self);
                 }
                 crate::input::Operation::SwitchMode(m) => {
                     if m == Mode::Command {

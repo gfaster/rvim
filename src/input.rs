@@ -64,7 +64,7 @@ fn read_char(reader: &mut impl Read) -> Option<char> {
         crate::exit();
         return None;
     }
-    log!("read: {c:?}");
+    // log!("read: {c:?}");
     Some(c)
 }
 

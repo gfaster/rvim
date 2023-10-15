@@ -1,5 +1,5 @@
 use std::{ops::{RangeInclusive, Range, RangeBounds}, fmt::Write};
-use crate::prelude::*;
+use crate::{prelude::*, debug::log};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Ord)]
 pub struct TermPos {
@@ -53,12 +53,23 @@ impl std::ops::RangeBounds<TermPos> for TermBox {
 }
 
 impl TermBox {
-    const fn xrng (&self) -> RangeInclusive<u32> {
+    pub const fn xrng (&self) -> RangeInclusive<u32> {
         self.start.x..=self.end.x
     }
-    const fn yrng (&self) -> RangeInclusive<u32> {
+    pub const fn yrng (&self) -> RangeInclusive<u32> {
         self.start.y..=self.end.y
     }
+
+    pub const fn xlen(&self) -> u32 {
+        self.assert_valid();
+        self.end.x - self.start.x + 1
+    }
+
+    pub const fn ylen(&self) -> u32 {
+        self.assert_valid();
+        self.end.y - self.start.y + 1
+    }
+
     fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32> ) -> Self {
         let xrng = TermGrid::rangebounds_to_range(xrng);
         let yrng = TermGrid::rangebounds_to_range(yrng);
@@ -66,6 +77,12 @@ impl TermBox {
             start: tp!(xrng.start, yrng.start),
             end: tp!(xrng.end - 1, yrng.end - 1)
         }
+    }
+
+    #[track_caller]
+    pub const fn assert_valid(&self) {
+        assert!(self.start.x <= self.end.x);
+        assert!(self.start.y <= self.end.y);
     }
 }
 
@@ -231,7 +248,9 @@ impl TermGrid {
     }
 
     pub fn put_cell(&mut self, pos: TermPos, c: impl Into<TermCell>) {
-        self[pos] = c.into();
+        let tcell = c.into();
+        assert_ne!(tcell.content, Some('\n'));
+        self[pos] = tcell;
     }
 
     /// resize the grid to given dimensions, returns true if resize occured;
@@ -257,21 +276,11 @@ impl TermGrid {
     }
 
     fn line_rng(&self, y: u32, xrng: impl RangeBounds<u32>) -> Range<usize> {
-        let start = match xrng.start_bound() {
-            std::ops::Bound::Included(x) => *x,
-            std::ops::Bound::Excluded(x) => *x + 1,
-            std::ops::Bound::Unbounded => 0,
-        };
-        let end = match xrng.end_bound() {
-            std::ops::Bound::Included(x) => *x + 1,
-            std::ops::Bound::Excluded(x) => *x,
-            std::ops::Bound::Unbounded => self.w,
-        };
-        assert!(start <= end);
-        assert!(end <= self.w);
+        let xrng = self.normalize_xrng(xrng);
+        assert!(xrng.end <= self.w);
         let yoff = y * self.w;
-        assert!(yoff + end <= self.w * self.h);
-        ((yoff + start) as usize)..((yoff + end) as usize)
+        assert!(yoff + xrng.end <= self.w * self.h);
+        ((yoff + xrng.start) as usize)..((yoff + xrng.end) as usize)
     }
 
     pub fn clear_bounds(&mut self, bounds: TermBox) {
@@ -296,7 +305,7 @@ impl TermGrid {
             std::ops::Bound::Excluded(x) => *x + 1,
             std::ops::Bound::Unbounded => 0,
         };
-        let end = match xrng.start_bound() {
+        let end = match xrng.end_bound() {
             std::ops::Bound::Included(x) => *x + 1,
             std::ops::Bound::Excluded(x) => *x,
             std::ops::Bound::Unbounded => self.w,
@@ -306,20 +315,21 @@ impl TermGrid {
 
     pub fn write_line(&mut self, y: u32, xrng: impl RangeBounds<u32>, color: Color, content: &str) -> usize {
         let mut cnt = 0;
-        let mut last = 0;
         let xrng = Self::rangebounds_to_range(xrng);
+        let mut last = xrng.start;
         for (c, x) in content.chars().zip(xrng.clone()) {
             last = x;
             if c == '\n' {
                 break;
             }
-            self[tp!(x, y)] = TermCell {
+            self.put_cell(tp!(x, y), TermCell {
                 color,
                 content: Some(c),
-            };
+            });
             cnt += 1;
         };
         let rng = self.line_rng(y, (last + 1)..xrng.end);
+        // log!("{content:?} => {} - {}", xrng.len() , rng.len());
         self.cells[rng].fill(TermCell::new());
         cnt
     }
@@ -338,38 +348,52 @@ impl TermGrid {
     }
 
     pub fn render(&self, dest: &mut impl std::io::Write) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut render_buf = Vec::<u8>::with_capacity(self.cells.len() * 3);
         let mut curr = Color::new();
-        write!(dest, "\x1b[1;1H")?;
-        for cell in &self.cells {
+
+        // hide the cursor and go to first cell
+        write!(render_buf, "\x1b[25l\x1b[1;1H")?;
+        for (i, cell) in self.cells.iter().enumerate() {
+            if i as u32 % self.w == 0 && i != 0 {
+                // it might help with render issues to have one of these lines
+                // write!(dest, "\n\x1b[1G")?;
+                // write!(dest, "\n\r")?;
+            }
             let Some(content) = cell.content else {
-                write!(dest, " ")?;
+                write!(render_buf, " ")?;
                 continue;
             };
             let color = cell.color;
             match (color.fg == curr.fg, color.bg == curr.bg, color.bold == curr.bold) {
                 (true, true, true) => (),
-                (true, true, false) => write!(dest, "\x1b[{}m", color.bold())?,
-                (false, true, true) => write!(dest, "\x1b[{}m", color.fg())?,
-                (true, false, true) => write!(dest, "\x1b[{}m", color.bg())?,
-                _ => write!(dest, "\x1b[{};{};{}m", color.fg(), color.bg(), color.bold())?,
+                (true, true, false) => write!(render_buf, "\x1b[{}m", color.bold())?,
+                (false, true, true) => write!(render_buf, "\x1b[{}m", color.fg())?,
+                (true, false, true) => write!(render_buf, "\x1b[{}m", color.bg())?,
+                _ => write!(render_buf, "\x1b[{};{};{}m", color.fg(), color.bg(), color.bold())?,
             }
             curr = color;
-            write!(dest, "{}", content)?;
+            write!(render_buf, "{}", content)?;
         }
-        write!(dest, "\x1b[{};{}H", self.cursorpos.row(), self.cursorpos.col())?;
+        // show the cursor and go to expected cursor position
+        write!(render_buf, "\x1b[25h")?;
+        // write!(dest, "X")?;
+        write!(render_buf, "\x1b[{};{}H", self.cursorpos.row(), self.cursorpos.col())?;
+        dest.write_all(&render_buf)?;
+        dest.flush()?;
         Ok(())
     }
 
     pub fn refbox(&mut self, bounds: TermBox) -> TermGridBox {
-        TermGridBox { grid: self, color: Color::new(), range: bounds }
+        TermGridBox { grid: self, color: Color::new(), range: bounds, cursor: tp!(0, 0) }
     }
 
     pub fn refline(&mut self, y: u32, xrng: impl RangeBounds<u32>) -> TermGridBox {
-        let xrng = Self::rangebounds_to_range(xrng);
+        let xrng = self.normalize_xrng(xrng);
         assert!(y < self.h);
         assert!(xrng.end <= self.w);
         let bounds = TermBox::from_ranges(xrng, y..=y);
-        TermGridBox { grid: self, color: Color::new(), range: bounds }
+        TermGridBox { grid: self, color: Color::new(), range: bounds, cursor: tp!(0, 0) }
     }
 
     pub fn set_cursorpos(&mut self, pos: TermPos) {
@@ -384,20 +408,58 @@ pub struct TermGridBox<'a> {
     grid: &'a mut TermGrid,
     color: Color,
     range: TermBox,
+    cursor: TermPos,
 }
 
 impl TermGridBox<'_> {
+    #[must_use = "colored does not mutate"]
     pub const fn colored(self, color: Color) -> Self {
         Self {
             color,
             ..self
         }
     }
+
+    pub fn set_color(&mut self, color: Color) -> &mut Self {
+        self.color = color;
+        self
+    }
+
+    pub fn cell_cnt(&self) -> u32 {
+        self.range.ylen() * self.range.xlen()
+    }
 }
 
 impl Write for TermGridBox<'_> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.grid.write_box(self.range.clone(), self.color, s);
+        let mut x = self.range.start.x + self.cursor.x;
+        let mut y = self.range.start.y + self.cursor.y;
+        for c in s.chars() {
+            if x > self.range.end.x {
+                x = self.range.start.x;
+                self.cursor.x = 0;
+                y += 1;
+                self.cursor.y += 1;
+            }
+            if y > self.range.end.y {
+                return Err(std::fmt::Error)
+            }
+            if c == '\n' {
+                let rng = self.grid.line_rng(y, x..=self.range.end.x);
+                self.grid.cells[rng].fill(TermCell::new());
+                x = self.range.start.x;
+                self.cursor.x = 0;
+                y += 1;
+                self.cursor.y += 1;
+                continue;
+            }
+            self.grid.put_cell(tp!(x, y), TermCell {
+                color: self.color,
+                content: Some(c),
+            });
+            x += 1;
+            self.cursor.x += 1;
+        }
         Ok(())
     }
 }

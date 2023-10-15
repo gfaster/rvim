@@ -5,7 +5,7 @@ use crate::prelude::*;
 use crate::render::BufId;
 use crate::term::TermPos;
 use crate::window::Component;
-use crate::{screen_write, term, window::Window};
+use crate::{term, window::Window};
 
 use super::{parser, Command};
 
@@ -14,12 +14,13 @@ pub enum CommandLineInput {
     Delete,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum CommandLineMode {
     Input,
     Output,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandType {
     Ex,
     Find,
@@ -56,37 +57,38 @@ macro_rules! in_ctx {
 }
 
 impl CommandLine {
-    pub fn render(&self, tui: &mut TermGrid) -> std::fmt::Result {
+    pub fn render(&self, ctx: &Ctx) -> std::fmt::Result {
         match self.mode {
             CommandLineMode::Input => {
-                let lead = match self.typ {
-                    CommandType::Ex => ':',
-                    CommandType::None => ' ',
-                    CommandType::Find => '/',
-                };
+                // let lead = match self.typ {
+                //     CommandType::Ex => ':',
+                //     CommandType::None => ' ',
+                //     CommandType::Find => '/',
+                // };
+                self.window.draw_buf(ctx, &self.input_buf);
+                let mut tui = ctx.tui.borrow_mut();
                 let (_, h) = tui.dim();
-                write!(
-                    tui.refbox(tui.line_bounds(h - 1)),
-                    "{lead}{}",
-                    self.input_buf
-                )?;
-                tui.set_cursorpos(TermPos {x: self.input_buf.len() as u32 - 1, y: h as u32 - 1});
+                tui.set_cursorpos(TermPos {x: self.input_buf.len() as u32 + 1, y: h as u32 - 1});
             }
             CommandLineMode::Output => {
                 if self.output_buf.len() > 0 {
-                    let (_, h) = tui.dim();
-                    write!(
-                        tui.refbox(tui.line_bounds(h - 1)),
-                        "{}",
-                        self.output_buf
-                    )?;
+                    self.window.draw_buf(ctx, &self.output_buf);
+                } else {
+                    self.window.draw_buf(ctx, &self.input_buf);
                 }
             }
         }
         Ok(())
     }
 
-    pub fn input(&mut self, tui: &mut TermGrid, input: CommandLineInput) -> std::fmt::Result {
+    pub fn draw_cursor(&self, tui: &mut TermGrid) {
+        if self.mode == CommandLineMode::Input {
+            tui.set_cursorpos(self.window.cursorpos());
+        }
+    }
+
+
+    pub fn input(&mut self, input: CommandLineInput) {
         self.set_mode(CommandLineMode::Input);
         match input {
             CommandLineInput::Append(c) => {
@@ -96,12 +98,15 @@ impl CommandLine {
                 self.input_buf.pop(&mut self.window.buf_ctx);
             }
         };
-        self.render(tui)
     }
 
     fn set_mode(&mut self, mode: CommandLineMode) {
         if mode != self.mode {
             std::mem::swap(&mut self.other_ctx, &mut self.window.buf_ctx);
+            self.mode = mode;
+            if mode == CommandLineMode::Input {
+                self.output_buf.clear(out_ctx!(self))
+            }
         }
     }
 
@@ -114,6 +119,10 @@ impl CommandLine {
         self.typ = typ;
     }
 
+    pub fn get_type(&self) -> CommandType {
+        self.typ
+    }
+
     pub fn complete(&mut self) -> Option<Command> {
         let s = std::mem::take(&mut self.input_buf);
         let out = parser::parse_command(&s.to_string(), self);
@@ -124,6 +133,7 @@ impl CommandLine {
 
     pub fn clear_all(&mut self) {
         self.clear_command();
+        self.output_buf.clear(out_ctx!(self));
     }
 
     pub fn clear_command(&mut self) {
@@ -134,7 +144,8 @@ impl CommandLine {
     pub fn new(tui: &TermGrid) -> Self {
         let (w, h) = tui.dim();
         let components = vec![
-            // Component::StatusLine(crate::window::StatusLine)
+            Component::StatusLine(crate::window::StatusLine),
+            Component::CommandPrefix(crate::window::CommandPrefix)
         ];
         Self {
             mode: CommandLineMode::Output,
@@ -142,13 +153,19 @@ impl CommandLine {
             other_ctx: BufCtx::new_anon(),
             typ: CommandType::None,
             output_buf: Buffer::new(),
-            window: Window::new_withdim(BufId::new_anon(), TermPos { x: 0, y: h - 1 }, w, 1, components),
+            window: Window::new_withdim(BufId::new_anon(), TermPos { x: 0, y: h - 2 }, w, 2, components),
         }
+    }
+
+    /// resize to fit window
+    pub fn resize(&mut self, tui: &TermGrid) {
+        self.window.snap_to_bottom(tui);
     }
 }
 
 impl std::fmt::Write for CommandLine {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.set_mode(CommandLineMode::Output);
         self.output_buf.insert_str(out_ctx!(self), s);
         Ok(())
     }
