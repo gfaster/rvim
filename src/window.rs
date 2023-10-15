@@ -1,10 +1,9 @@
-use crate::debug::log;
+use crate::debug::{log, sleep};
 use crate::prelude::*;
 use crate::render::BufId;
 use crate::tui::TermBox;
 use std::fmt::Write;
 
-use crate::buffer::Buffer;
 use crate::buffer::DocPos;
 use crate::render::Ctx;
 use crate::term;
@@ -14,65 +13,6 @@ use enum_dispatch::enum_dispatch;
 use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
 
-/// structure for a focused buffer. This is not a window and not a buffer. It holds the context of a
-/// buffer editing session for later use. A window can display this, but shouldn't be limited  to
-/// displaying only this. The reason I'm making this separate from window is that I want window to
-/// be strictly an abstraction for rendering and/or focusing.
-///
-/// I need to think about what niche the command line fits into. Is it another window, or is it its
-/// own thing?
-///
-/// I should consider a "text field" or something similar as a trait for
-/// an area that can be focused and take input.
-///
-/// Adhearing to Rust conventions for this will be challenging I want each Buffer to be referenced
-/// by multiple BufCtx, and to be mutated by multiple BufCtx. I think this should be done by making
-/// BufCtx only interact with Buffers when the BufCtx functions are called.
-#[derive(Debug, Clone, Copy)]
-pub struct BufCtx {
-    pub buf_id: BufId,
-
-    /// I use DocPos rather than a flat offset to more easily handle linewise operations, which
-    /// seem to be more common than operations that operate on the flat buffer. It also makes
-    /// translation more convienent, especially when the buffer is stored as an array of lines
-    /// rather than a flat byte array (although it seems like this would slow transversal?).
-    pub cursorpos: DocPos,
-    pub virtual_pos: DocPos,
-    pub topline: usize,
-}
-
-impl BufCtx {
-    pub fn win_pos(&self, win: &Window) -> TermPos {
-        let y = self
-            .cursorpos
-            .y
-            .checked_sub(self.topline)
-            .expect("tried to move cursor above window") as u32;
-        let y = y + win.bounds.start.y;
-        let x = self.cursorpos.x as u32 + win.bounds.start.x;
-        TermPos { x, y }
-    }
-
-    /// draw the window
-    pub fn draw(&self, win: &Window, ctx: &Ctx) {
-        let mut tui = ctx.tui.borrow_mut();
-        let buf = ctx.getbuf(self.buf_id).unwrap();
-        let _ = write!(tui.refbox(win.bounds), "{}", buf);
-    }
-
-    pub fn new(buf: BufId) -> Self {
-        Self {
-            buf_id: buf,
-            cursorpos: DocPos { x: 0, y: 0 },
-            virtual_pos: DocPos { x: 0, y: 0 },
-            topline: 0,
-        }
-    }
-
-    pub fn new_anon() -> Self {
-        Self::new(BufId::new_anon())
-    }
-}
 
 #[derive(Default, Debug)]
 struct Padding {
@@ -103,7 +43,7 @@ pub struct RelLineNumbers;
 impl DispComponent for RelLineNumbers {
     fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
         let linecnt = buffer.linecnt();
-        let y = win.cursorpos().y;
+        let y = buffer.cursor.win_pos(win).y;
         let mut tui = ctx.tui.borrow_mut();
 
         for l in 0..win.height() {
@@ -120,8 +60,8 @@ impl DispComponent for RelLineNumbers {
             // continue;
 
             if l == y {
-                write!(target, " {:<3} ", l as usize + win.buf_ctx.topline + 1).unwrap();
-            } else if l as usize + win.buf_ctx.topline < linecnt {
+                write!(target, " {:<3} ", l as usize + buffer.cursor.topline + 1).unwrap();
+            } else if l as usize + buffer.cursor.topline < linecnt {
                 write!(target, "{:>4} ", y.abs_diff(l)).unwrap();
             } else {
                 write!(target, "{:5}", ' ').unwrap();
@@ -253,7 +193,6 @@ impl DispComponent for StatusLine {
 }
 
 pub struct Window {
-    pub buf_ctx: BufCtx,
     bounds: TermBox,
     components: Vec<Component>,
     padding: Padding,
@@ -261,14 +200,13 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(buf: BufId, tui: &TermGrid) -> Self {
+    pub fn new( tui: &TermGrid) -> Self {
         let components = vec![Component::RelLineNumbers(RelLineNumbers)];
         let (w, h) = tui.dim();
-        Self::new_withdim(buf, TermPos { x: 0, y: 0 }, w, h, components)
+        Self::new_withdim(TermPos { x: 0, y: 0 }, w, h, components)
     }
 
     pub fn new_withdim(
-        buf: BufId,
         topleft: TermPos,
         width: u32,
         height: u32,
@@ -297,7 +235,6 @@ impl Window {
             },
         );
         let out = Self {
-            buf_ctx: BufCtx::new(buf),
             bounds: TermBox {
                 start: TermPos {
                     x: topleft.x + padding.left,
@@ -314,6 +251,10 @@ impl Window {
         };
         out.bounds.assert_valid();
         out
+    }
+
+    pub fn bounds(&self) -> TermBox {
+        self.bounds
     }
 
     fn real_bounds(&self) -> TermBox {
@@ -379,16 +320,12 @@ impl Window {
     }
 
     fn reltoabs(&self, pos: TermPos) -> TermPos {
+        // log!("{:?} + {pos:?}", self.bounds);
+        // sleep(10);
         TermPos {
             x: pos.x + self.bounds.start.x,
             y: pos.y + self.bounds.start.y,
         }
-    }
-
-    pub fn draw(&self, ctx: &Ctx) {
-        // log!("height: {}", self.height());
-        let buf = ctx.getbuf(self.buf_ctx.buf_id).unwrap();
-        self.draw_buf(ctx, buf);
     }
 
     pub fn draw_buf(&self, ctx: &Ctx, buf: &Buffer) {
@@ -398,74 +335,62 @@ impl Window {
     pub fn draw_buf_colored(&self, ctx: &Ctx, buf: &Buffer, color: Color) {
         {
             let mut tui = ctx.tui.borrow_mut();
-            let range = self.buf_ctx.topline..(self.buf_ctx.topline + self.height() as usize);
+            let range = buf.cursor.topline..(buf.cursor.topline + self.height() as usize);
             for (y, line) in buf.get_lines(range.clone()).into_iter().chain(std::iter::repeat("")).take(range.len()).enumerate() {
                 // log!("{line:?}");
                 tui.write_line(y as u32 + self.bounds.start.y, self.bounds.xrng(), color, line);
             }
-            tui.set_cursorpos(self.cursorpos());
+            buf.cursor.draw(self, &mut tui)
         }
         self.components.iter().for_each(|x| x.draw(self, &buf, ctx));
-        if ctx.focused() == self.buf_ctx.buf_id {
-            ctx.tui
-                .borrow_mut()
-                .set_cursorpos(self.reltoabs(self.buf_ctx.win_pos(self)))
-        }
     }
 
-    pub fn draw_cursor(&self, tui: &mut TermGrid) {
-        tui.set_cursorpos(self.cursorpos());
-    }
 
-    pub fn cursorpos(&self) -> TermPos {
-        self.buf_ctx.win_pos(self)
-    }
-
-    pub fn move_cursor(&mut self, buf: &Buffer, dx: isize, dy: isize) {
-        let newy = self
-            .buf_ctx
-            .cursorpos
+    pub fn move_cursor(&mut self, buf: &mut Buffer, dx: isize, dy: isize) {
+        let newy = buf
+            .cursor
+            .pos
             .y
             .saturating_add_signed(dy)
             .clamp(0, buf.linecnt().saturating_sub(1));
         let line = &buf.get_lines(newy..(newy + 1))[0];
-        let newx = self
-            .buf_ctx
-            .virtual_pos
+        let newx = buf
+            .cursor
+            .virtpos
             .x
             .saturating_add_signed(dx)
             .clamp(0, line.len());
 
         if dx != 0 {
-            self.buf_ctx.virtual_pos.x = newx;
+            buf.cursor.virtpos.x = newx;
         }
-        self.buf_ctx.virtual_pos.y = newy;
+        buf.cursor.virtpos.y = newy;
 
-        self.buf_ctx.cursorpos.x = newx;
-        self.buf_ctx.cursorpos.y = newy;
-        self.fit_ctx_frame();
+        buf.cursor.pos.x = newx;
+        buf.cursor.pos.y = newy;
+        self.fit_ctx_frame(&mut buf.cursor);
     }
 
-    pub fn set_pos(&mut self, buf: &Buffer, pos: DocPos) {
+    pub fn set_pos(&mut self, buf: &mut Buffer, pos: DocPos) {
         let newy = pos.y.clamp(0, buf.linecnt().saturating_sub(1));
-        self.buf_ctx.cursorpos.y = newy;
-        self.buf_ctx.virtual_pos.y = newy;
+        buf.cursor.pos.y = newy;
+        buf.cursor.virtpos.y = newy;
         let line = &buf.get_lines(newy..(newy + 1))[0];
-        self.buf_ctx.cursorpos.x = pos.x.clamp(0, line.len());
-        self.buf_ctx.virtual_pos.x = self.buf_ctx.cursorpos.x;
-        self.fit_ctx_frame();
+        buf.cursor.pos.x = pos.x.clamp(0, line.len());
+        buf.cursor.virtpos.x = buf.cursor.pos.x;
+        self.fit_ctx_frame(&mut buf.cursor);
     }
 
-    pub fn fit_ctx_frame(&mut self) {
-        let y = self.buf_ctx.cursorpos.y;
-        let top = self.buf_ctx.topline;
+    pub fn fit_ctx_frame(&mut self, cursor: &mut Cursor) {
+        let y = cursor.pos.y;
+        let top = cursor.topline;
         let h = self.height() as usize;
-        self.buf_ctx.topline = top.clamp(y.saturating_sub(h - 1), y);
+        cursor.topline = top.clamp(y.saturating_sub(h - 1), y);
     }
 
-    pub fn center_view(&mut self) {
-        let y = self.buf_ctx.cursorpos.y;
-        self.buf_ctx.topline = y.saturating_sub(self.height() as usize / 2);
+    pub fn center_view(&mut self, cursor: &mut Cursor) {
+        let y = cursor.pos.y;
+        cursor.topline = y.saturating_sub(self.height() as usize / 2);
     }
 
     // pub fn insert_char<B: Buffer>(&mut self,
@@ -478,9 +403,7 @@ mod test {
     fn basic_context() -> Ctx {
         let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
         let mut ctx = Ctx::new_testing(b);
-        let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx::new(bufid),
             bounds: TermBox {
                 start: TermPos { x: 0, y: 0 },
                 end: TermPos { x: 7, y: 32 },
@@ -495,9 +418,7 @@ mod test {
     fn scroll_context() -> Ctx {
         let b = Buffer::from_str("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast");
         let mut ctx = Ctx::new_testing(b);
-        let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx::new(bufid),
             bounds: TermBox {
                 start: TermPos { x: 0, y: 0 },
                 end: TermPos { x: 7, y: 10 },
@@ -512,9 +433,7 @@ mod test {
     fn blank_context() -> Ctx {
         let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
         let mut ctx = Ctx::new_testing(b);
-        let bufid = ctx.window.buf_ctx.buf_id;
         ctx.window = Window {
-            buf_ctx: BufCtx::new(bufid),
             bounds: TermBox {
                 start: TermPos { x: 0, y: 0 },
                 end: TermPos { x: 7, y: 32 },
@@ -524,10 +443,5 @@ mod test {
             dirty: false,
         };
         ctx
-    }
-
-    fn scroll_moves_topline() {
-        let ctx = scroll_context();
-        assert_eq!(ctx.window.buf_ctx.topline, 0);
     }
 }

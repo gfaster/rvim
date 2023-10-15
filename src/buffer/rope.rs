@@ -14,7 +14,6 @@ use std::rc::Rc;
 use std::str::Chars;
 
 use crate::buffer::DocPos;
-use crate::window::BufCtx;
 
 use super::DocRange;
 
@@ -606,26 +605,26 @@ impl RopeBuffer {
         }
     }
 
-    pub fn delete_char(&mut self, _ctx: &mut BufCtx) {
-        self.invalidate_cache();
-        todo!();
-    }
+    // pub fn delete_char(&mut self, _ctx: &mut BufCursor) {
+    //     self.invalidate_cache();
+    //     todo!();
+    // }
 
     pub fn delete_range(&mut self, r: DocRange) {
         self.invalidate_cache();
         self.data = std::mem::take(&mut self.data).delete_range(r);
     }
 
-    pub fn replace_range(&mut self, _ctx: &mut BufCtx, _r: DocRange, _s: &str) {
-        self.invalidate_cache();
-        todo!()
-    }
+    // pub fn replace_range(&mut self, _ctx: &mut BufCursor, _r: DocRange, _s: &str) {
+    //     self.invalidate_cache();
+    //     todo!()
+    // }
 
-    pub fn insert_str(&mut self, ctx: &mut BufCtx, s: &str) {
-        self.invalidate_cache();
-        let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s);
-        self.data = new;
-    }
+    // pub fn insert_str(&mut self, ctx: &mut BufCursor, s: &str) {
+    //     self.invalidate_cache();
+    //     let new = std::mem::take(&mut self.data).insert(ctx.cursorpos, s);
+    //     self.data = new;
+    // }
 
     pub fn get_off(&self, pos: DocPos) -> usize {
         self.cache.pos_docpos(pos).unwrap_or_else(|| {

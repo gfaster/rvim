@@ -470,8 +470,8 @@ impl TermGrid {
     }
 
     pub fn set_cursorpos(&mut self, pos: TermPos) {
-        assert!(pos.x < self.w);
-        assert!(pos.y < self.h);
+        assert!(pos.x < self.w, "tried to move cursor to x {} but term width is only {}", pos.x, self.w);
+        assert!(pos.y < self.h, "tried to move cursor to y {} but term height is only {}", pos.y, self.h);
         self.cursorpos = pos;
     }
 }

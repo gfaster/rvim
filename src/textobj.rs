@@ -237,7 +237,7 @@ pub fn inner_word_object(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
 #[cfg(test)]
 mod test {
 
-    use crate::buffer::Buf;
+    use crate::buffer::BufCore;
 
     use super::motions::*;
     use super::TextMotion;

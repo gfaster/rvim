@@ -94,3 +94,7 @@ pub fn log_args(args: fmt::Arguments) {
         // .expect("write succeeds")
         .unwrap_or(());
 }
+
+pub fn sleep(seconds: u64) {
+    std::thread::sleep(std::time::Duration::from_secs(seconds))
+}

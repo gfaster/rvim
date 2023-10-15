@@ -52,6 +52,7 @@ pub struct Ctx {
     termios: Termios,
     orig_termios: Termios,
     command_line: CommandLine,
+    focused: BufId,
     pub tui: RefCell<TermGrid>,
     pub term_fd: RawFd,
     pub window: Window,
@@ -69,7 +70,7 @@ impl Ctx {
         let termios = termios::tcgetattr(term).unwrap();
         let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
-        let window = Window::new(bufid, &tui);
+        let window = Window::new(&tui);
         Self {
             id_counter: 2,
             buffers: BTreeMap::from([(bufid, buf)]),
@@ -80,6 +81,7 @@ impl Ctx {
             tui: tui.into(),
             mode: Mode::Normal,
             window,
+            focused: bufid,
         }
     }
 }
@@ -104,7 +106,6 @@ impl Ctx {
             crate::window::RelLineNumbers,
         )];
         let window = Window::new_withdim(
-            bufid,
             term::TermPos { x: 0, y: 0 },
             tui.dim().0,
             tui.dim().1 - 2,
@@ -120,6 +121,7 @@ impl Ctx {
             window,
             command_line: CommandLine::new(&tui),
             tui: tui.into(),
+            focused: bufid,
         }
     }
 
@@ -145,12 +147,12 @@ impl Ctx {
         }
 
         let _ = self.command_line.render(self);
-        self.window.draw(self);
+        self.window.draw_buf(self, self.focused_buf());
 
         match self.mode {
             Mode::Normal | Mode::Insert => {
                 let tui = self.tui.get_mut();
-                self.window.draw_cursor(tui)
+                self.buffers[&self.focused].cursor.draw(&self.window, tui)
             }
             Mode::Command => {
                 let tui = self.tui.get_mut();
@@ -163,7 +165,7 @@ impl Ctx {
     }
 
     pub fn focused(&self) -> BufId {
-        self.window.buf_ctx.buf_id
+        self.focused
     }
 
     pub fn focused_buf(&self) -> &Buffer {
@@ -176,7 +178,6 @@ impl Ctx {
         self.buffers
             .insert(buf_id, buf)
             .map(|_| panic!("Buf insertion tried to reuse an id"));
-        self.window.buf_ctx.buf_id = buf_id;
         self.tui.borrow_mut().clear();
     }
 
@@ -208,17 +209,14 @@ impl Ctx {
     fn apply_motion(&mut self, motion: Motion) {
         match motion {
             Motion::ScreenSpace { dy, dx } => {
-                // type system here is kinda sneaky, can't use getbuf because all of self is
-                // borrowed
-                let buf = &self.buffers[&self.focused()];
+                let buf = self.buffers.get_mut(&self.focused).unwrap();
                 self.window.move_cursor(buf, dx, dy)
             }
             Motion::BufferSpace { doff: _ } => todo!(),
             Motion::TextObj(_) => panic!("text objects cannot be move targets"),
             Motion::TextMotion(m) => {
-                let buf = &self.buffers[&self.focused()];
-                let buf_ctx = &mut self.window.buf_ctx;
-                if let Some(newpos) = m(buf, buf_ctx.cursorpos) {
+                let buf = &mut self.buffers.get_mut(&self.focused).unwrap();
+                if let Some(newpos) = m(buf, buf.cursor.pos) {
                     self.window.set_pos(buf, newpos);
                 }
             }
@@ -263,21 +261,18 @@ impl Ctx {
             _ => match action.operation {
                 crate::input::Operation::Change => todo!(),
                 crate::input::Operation::Insert(c) => {
-                    let buf_ctx = &mut self.window.buf_ctx;
-                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
-                    buf.insert_str(buf_ctx, c.replace('\r', "\n").as_str());
-                    self.window.fit_ctx_frame();
+                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                    buf.insert_str(c.replace('\r', "\n").as_str());
+                    self.window.fit_ctx_frame(&mut buf.cursor);
                 }
                 crate::input::Operation::DeleteBefore => {
-                    let buf_ctx = &mut self.window.buf_ctx;
-                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
-                    buf.delete_char_before(buf_ctx);
+                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                    buf.delete_char_before();
                 }
                 crate::input::Operation::DeleteAfter => {
-                    let buf_ctx = &mut self.window.buf_ctx;
-                    let buf = self.buffers.get_mut(&buf_ctx.buf_id).unwrap();
-                    buf.delete_char(buf_ctx);
-                    if buf_ctx.cursorpos.x != 0 {
+                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                    buf.delete_char();
+                    if buf.cursor.pos.x != 0 {
                         self.window.move_cursor(buf, 1, 0);
                     }
                 }
@@ -291,15 +286,10 @@ impl Ctx {
                 crate::input::Operation::None => (),
                 crate::input::Operation::Replace(_) => todo!(),
                 crate::input::Operation::Debug => {
-                    let buf_ctx = self.window.buf_ctx;
-                    let id = buf_ctx.buf_id;
-                    let buf = &self.buffers[&id];
-                    let lines = buf.get_lines(buf_ctx.cursorpos.y..(buf_ctx.cursorpos.y + 1));
-                    log!("line: {:?}", lines);
-                    log!("len: {:?}", lines.get(0).unwrap_or(&"".into()).len());
+                    unimplemented!()
                 }
                 crate::input::Operation::RecenterView => {
-                    self.window.center_view()
+                    self.window.center_view(&mut self.buffers.get_mut(&self.focused()).unwrap().cursor)
                 },
             },
         };

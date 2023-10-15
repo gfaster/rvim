@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{buffer::Buffer, render::Ctx};
+use crate::render::Ctx;
 use std::fmt::Write;
 use std::{error::Error, fmt::Display, fs::OpenOptions, io::Read, path::PathBuf};
 pub mod cmdline;

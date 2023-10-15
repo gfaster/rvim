@@ -1,3 +1,4 @@
+use crate::buffer::Buffer;
 use crate::debug::log;
 use crate::prelude::*;
 use std::fmt::Write;
@@ -32,30 +33,10 @@ pub struct CommandLine {
     mode: CommandLineMode,
     input_buf: Buffer,
     typ: CommandType,
-    other_ctx: BufCtx,
+    other_ctx: Cursor,
     window: Window,
     output_buf: Buffer,
     pub output_severity: crate::tui::TextSeverity,
-}
-
-macro_rules! out_ctx {
-    ($cmd:expr) => {
-        if $cmd.mode == CommandLineMode::Input {
-            &mut $cmd.other_ctx
-        } else {
-            &mut $cmd.window.buf_ctx
-        }
-    };
-}
-
-macro_rules! in_ctx {
-    ($cmd:expr) => {
-        if $cmd.mode == CommandLineMode::Output {
-            &mut $cmd.other_ctx
-        } else {
-            &mut $cmd.window.buf_ctx
-        }
-    };
 }
 
 impl CommandLine {
@@ -92,7 +73,7 @@ impl CommandLine {
 
     pub fn draw_cursor(&self, tui: &mut TermGrid) {
         if self.mode == CommandLineMode::Input {
-            tui.set_cursorpos(self.window.cursorpos());
+            self.input_buf.cursor.draw(&self.window, tui)
         }
     }
 
@@ -100,22 +81,19 @@ impl CommandLine {
         self.set_mode(CommandLineMode::Input);
         match input {
             CommandLineInput::Append(c) => {
-                self.input_buf.push(&mut self.window.buf_ctx, c);
+                self.input_buf.push(c);
             }
             CommandLineInput::Delete => {
-                self.input_buf.pop(&mut self.window.buf_ctx);
+                self.input_buf.pop();
             }
         };
     }
 
     fn set_mode(&mut self, mode: CommandLineMode) {
-        if mode != self.mode {
-            std::mem::swap(&mut self.other_ctx, &mut self.window.buf_ctx);
-            self.mode = mode;
-            if mode == CommandLineMode::Input {
-                self.output_buf.clear(out_ctx!(self));
-                self.output_severity = TextSeverity::Normal;
-            }
+        self.mode = mode;
+        if mode == CommandLineMode::Input {
+            self.output_buf.clear();
+            self.output_severity = TextSeverity::Normal;
         }
     }
 
@@ -133,8 +111,8 @@ impl CommandLine {
     }
 
     pub fn complete(&mut self) -> Option<Command> {
-        let s = std::mem::take(&mut self.input_buf);
-        let out = parser::parse_command(&s.to_string(), self);
+        let out = parser::parse_command(&self.input_buf.to_string(), self);
+        self.input_buf.clear();
         self.clear_command();
         self.mode = CommandLineMode::Output;
         out
@@ -142,13 +120,13 @@ impl CommandLine {
 
     pub fn clear_all(&mut self) {
         self.clear_command();
-        self.output_buf.clear(out_ctx!(self));
+        self.output_buf.clear();
         self.output_severity = TextSeverity::Normal;
     }
 
     pub fn clear_command(&mut self) {
         self.typ = CommandType::None;
-        self.input_buf.clear(in_ctx!(self));
+        self.input_buf.clear();
     }
 
     pub fn new(tui: &TermGrid) -> Self {
@@ -160,11 +138,10 @@ impl CommandLine {
         Self {
             mode: CommandLineMode::Output,
             input_buf: Buffer::new(),
-            other_ctx: BufCtx::new_anon(),
+            other_ctx: Cursor::new(),
             typ: CommandType::None,
             output_buf: Buffer::new(),
             window: Window::new_withdim(
-                BufId::new_anon(),
                 TermPos { x: 0, y: h - 2 },
                 w,
                 2,
@@ -183,7 +160,7 @@ impl CommandLine {
 impl std::fmt::Write for CommandLine {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         self.set_mode(CommandLineMode::Output);
-        self.output_buf.insert_str(out_ctx!(self), s);
+        self.output_buf.insert_str(s);
         Ok(())
     }
 }

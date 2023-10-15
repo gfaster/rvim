@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{Buf, DocPos};
+use super::{BufCore, DocPos};
 
 pub struct SimpleBuffer {
     data: String,
@@ -16,7 +16,7 @@ pub struct SimpleBuffer {
     outdated_lines: Cell<bool>,
 }
 
-impl super::Buf for SimpleBuffer {
+impl super::BufCore for SimpleBuffer {
     fn new() -> Self {
         Self {
             data: String::new(),
@@ -77,21 +77,21 @@ impl super::Buf for SimpleBuffer {
         out
     }
 
-    fn delete_char(&mut self, ctx: &mut crate::window::BufCtx) -> char {
-        let off = self.to_fileoff(ctx.cursorpos);
+    fn delete_char(&mut self, ctx: &mut Cursor) -> char {
+        let off = self.to_fileoff(ctx.pos);
         let c = self.data.remove(off);
         self.outdated_lines.set(true);
         if c == '\n' {
             self.update_bufctx(ctx, off.saturating_sub(1));
         } else {
-            ctx.cursorpos.x = ctx.cursorpos.x.saturating_sub(1);
-            ctx.virtual_pos = ctx.cursorpos;
+            ctx.pos.x = ctx.pos.x.saturating_sub(1);
+            ctx.virtpos = ctx.pos;
         }
         c
     }
 
-    fn delete_char_before(&mut self, ctx: &mut crate::window::BufCtx) -> Option<char> {
-        let off = self.to_fileoff(ctx.cursorpos).checked_sub(1)?;
+    fn delete_char_before(&mut self, ctx: &mut Cursor) -> Option<char> {
+        let off = self.to_fileoff(ctx.pos).checked_sub(1)?;
         let c = self.data.remove(off);
         self.outdated_lines.set(true);
         self.update_bufctx(ctx, off);
@@ -125,16 +125,16 @@ impl super::Buf for SimpleBuffer {
         DocPos { x, y }
     }
 
-    fn insert_str(&mut self, ctx: &mut crate::window::BufCtx, s: &str) {
-        let off = self.to_fileoff(ctx.cursorpos);
+    fn insert_str(&mut self, ctx: &mut Cursor, s: &str) {
+        let off = self.to_fileoff(ctx.pos);
         self.data.insert_str(off, s);
         self.outdated_lines.set(true);
         let new_off = off + s.len();
         if s.contains('\n') {
             self.update_bufctx(ctx, new_off);
         } else {
-            ctx.cursorpos.x += s.len();
-            ctx.virtual_pos.x = ctx.cursorpos.x;
+            ctx.pos.x += s.len();
+            ctx.virtpos.x = ctx.pos.x;
         }
     }
 
@@ -146,9 +146,9 @@ impl super::Buf for SimpleBuffer {
         self.data.len()
     }
 
-    fn clear(&mut self, ctx: &mut BufCtx) {
+    fn clear(&mut self, ctx: &mut Cursor) {
         self.data.clear();
-        *ctx = BufCtx::new(ctx.buf_id);
+        *ctx = Cursor::new();
         self.outdated_lines.set(true);
     }
 
@@ -158,6 +158,10 @@ impl super::Buf for SimpleBuffer {
             return None;
         }
         self.data[off..].chars().next()
+    }
+
+    fn set_path(&mut self, path: std::path::PathBuf) {
+        self.path = Some(path);
     }
 }
 
@@ -197,10 +201,10 @@ impl SimpleBuffer {
         DocPos { x, y }
     }
 
-    fn update_bufctx(&self, ctx: &mut BufCtx, new_off: usize) {
+    fn update_bufctx(&self, ctx: &mut Cursor, new_off: usize) {
         let pos = self.off_to_docpos(new_off);
-        ctx.cursorpos = pos;
-        ctx.virtual_pos = pos;
+        ctx.pos = pos;
+        ctx.virtpos = pos;
     }
 }
 
