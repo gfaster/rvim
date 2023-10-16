@@ -338,14 +338,17 @@ mod syn {
         inner_backtick:  TextObject = ('i' '`') => Motion::TextObj(textobj::inner_backtick),
         a_backtick:      TextObject = ('a' '`') => Motion::TextObj(textobj::a_backtick),
 
-        start_of_line:           Motion = ('0') => Motion::TextMotion(motions::start_of_line),
         word_subset_backward:    Motion = ('b') => Motion::TextMotion(motions::word_subset_backward),
         word_backward:           Motion = ('B') => Motion::TextMotion(motions::word_backward),
         word_subset_forward:     Motion = ('w') => Motion::TextMotion(motions::word_subset_forward),
         word_forward:            Motion = ('W') => Motion::TextMotion(motions::word_forward),
         word_end_subset_forward: Motion = ('e') => Motion::TextMotion(motions::word_end_subset_forward),
         word_end_forward:        Motion = ('E') => Motion::TextMotion(motions::word_end_forward),
+
+        start_of_line:           Motion = ('0') => Motion::TextMotion(motions::start_of_line),
         end_of_line:             Motion = ('$') => Motion::TextMotion(motions::end_of_line),
+        start_of_buffer:         Motion = ('g' 'g') => Motion::TextMotion(motions::start_of_buffer),
+        end_of_buffer:           Motion = ('G') => Motion::TextMotion(motions::end_of_buffer),
     }
 
     #[cfg(test)]

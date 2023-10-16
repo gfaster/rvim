@@ -331,7 +331,7 @@ impl Ctx {
                 Operation::None => (),
                 Operation::Replace(_) => todo!(),
                 Operation::Debug => {
-                    unimplemented!()
+                    write!(self.warning(), "not yet implemented").unwrap();
                 }
                 Operation::RecenterView => self
                     .window

@@ -409,7 +409,12 @@ impl TermGrid {
                 // write!(dest, "\n\r")?;
             }
             let Some(content) = cell.content else {
-                write!(render_buf, " ")?;
+                if curr.bg != BasicColor::Default {
+                    curr.bg = BasicColor::Default;
+                    write!(render_buf, "\x1b[{}m ", curr.bg())?;
+                } else {
+                    write!(render_buf, " ")?;
+                }
                 continue;
             };
             let color = cell.color;

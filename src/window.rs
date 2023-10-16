@@ -49,18 +49,17 @@ impl DispComponent for RelLineNumbers {
             let winbase = win.reltoabs(TermPos { x: 0, y: l });
 
             let mut target = tui
-                .refline(winbase.y, (winbase.x - 5)..(winbase.x))
-                .colored(Color {
-                    fg: BasicColor::Green,
-                    ..Color::new()
-                });
+                .refline(winbase.y, (winbase.x - 5)..(winbase.x));
 
             // write!(target, "X").unwrap();
             // continue;
-
+            let fg = BasicColor::Green;
+            let bg = BasicColor::Default;
             if l == y {
+                target.set_color(Color { fg, bg, ..Color::new()});
                 write!(target, " {:<3} ", l as usize + buffer.cursor.topline + 1).unwrap();
             } else if l as usize + buffer.cursor.topline < linecnt {
+                target.set_color(Color { fg, bg, ..Color::new()});
                 write!(target, "{:>4} ", y.abs_diff(l)).unwrap();
             } else {
                 write!(target, "{:5}", ' ').unwrap();
@@ -154,7 +153,7 @@ impl DispComponent for StatusLine {
             crate::Mode::Normal => (
                 Color {
                     fg: BasicColor::Black,
-                    bg: BasicColor::Green,
+                    bg: BasicColor::Blue,
                     bold: true,
                 },
                 " NORMAL ",
@@ -162,7 +161,7 @@ impl DispComponent for StatusLine {
             crate::Mode::Insert => (
                 Color {
                     fg: BasicColor::Black,
-                    bg: BasicColor::Blue,
+                    bg: BasicColor::Yellow,
                     bold: true,
                 },
                 " INSERT ",
@@ -170,7 +169,7 @@ impl DispComponent for StatusLine {
             crate::Mode::Command => (
                 Color {
                     fg: BasicColor::Black,
-                    bg: BasicColor::Blue,
+                    bg: BasicColor::Green,
                     bold: true,
                 },
                 " COMMAND ",

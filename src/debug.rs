@@ -22,42 +22,30 @@ struct LogComponents {
 }
 
 static OUTPUT: Mutex<Option<LogComponents>> = Mutex::new(None);
-const OUTPUT_FIFO_PATH: &str = "/tmp/rvim_log.fifo";
+const LOG_FILE: &str = "./rvim.log";
 
 fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
     let mut guard = OUTPUT.lock().unwrap();
     if guard.is_some() {
-        assert!(fs::metadata(OUTPUT_FIFO_PATH)
-            .unwrap()
-            .file_type()
-            .is_fifo());
         return guard;
     }
 
-    if !Path::new(OUTPUT_FIFO_PATH).exists() {
-        mkfifo(
-            OUTPUT_FIFO_PATH,
-            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
-        )
-        .unwrap();
-    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(LOG_FILE)
+        .expect("fifo created");
 
     // if the file load fails, then we have no way of knowing - alacritty will display a popup
     // error instead of returning a failure exit code
-    let child = Command::new("/usr/bin/alacritty")
+    let term = std::env::var("TERM").unwrap_or("xterm".to_owned());
+    let child = Command::new(&term)
         .arg("--command")
-        .arg("/bin/cat")
-        .arg(OUTPUT_FIFO_PATH.escape_debug().to_string())
+        .arg("tail")
+        .arg("-f")
+        .arg(LOG_FILE.escape_debug().to_string())
         .spawn()
         .unwrap();
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .open(OUTPUT_FIFO_PATH)
-        .expect("fifo created");
-    assert!(fs::metadata(OUTPUT_FIFO_PATH)
-        .unwrap()
-        .file_type()
-        .is_fifo());
 
     *guard = Some(LogComponents { child, file });
 
@@ -70,8 +58,6 @@ pub fn is_init() -> bool {
 
 pub fn cleanup() {
     if is_init() {
-        fs::remove_file(OUTPUT_FIFO_PATH)
-            .unwrap_or_else(|_| eprintln!("failed to delete fifo for log"));
     }
 }
 

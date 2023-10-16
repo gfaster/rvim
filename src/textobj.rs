@@ -200,6 +200,14 @@ pub mod motions {
         let x = buf.line(pos.y).len();
         Some(DocPos { x, y: pos.y })
     }
+
+    pub(crate) fn end_of_buffer(buf: &Buffer, _pos: DocPos) -> Option<DocPos> {
+        Some(buf.last())
+    }
+
+    pub(crate) fn start_of_buffer(_buf: &Buffer, _pos: DocPos) -> Option<DocPos> {
+        Some(DocPos {x: 0, y: 0 })
+    }
 }
 
 /*
