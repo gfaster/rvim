@@ -1,4 +1,4 @@
-use std::fmt::{Write, Display};
+use std::{fmt::{Write, Display}, ops::Range};
 use crate::{prelude::*, render::BufId, window::Window, term::TermPos};
 use std::{ops::RangeBounds, cell::Cell};
 
@@ -27,6 +27,7 @@ impl DocPos {
     }
 }
 
+/// A half-open range of [`DocPos`]
 #[derive(Debug, Clone, Copy)]
 pub struct DocRange {
     pub start: DocPos,
@@ -86,8 +87,11 @@ pub trait BufCore: Sized {
     fn from_str(s: &str) -> Self;
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()>;
     fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str>;
-    fn delete_char(&mut self, ctx: &mut Cursor) -> char;
-    fn delete_char_before(&mut self, ctx: &mut Cursor) -> Option<char>;
+
+    /// this is the functionality for `x` normal command, I need to think if this is the right
+    /// place to put this behavior
+    fn delete_char(&mut self, pos: DocPos) -> char;
+    fn delete_range(&mut self, rng: Range<DocPos>) -> String;
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
     fn end(&self) -> DocPos;
@@ -99,20 +103,14 @@ pub trait BufCore: Sized {
     fn clear(&mut self, ctx: &mut Cursor);
     fn char_at(&self, pos: DocPos) -> Option<char>;
 
+    /// get the position of byte offset + `pos`
+    fn pos_delta(&self, pos: DocPos, off: isize) -> DocPos;
+
+    fn pos_to_offset(&self, pos: DocPos) -> usize;
+    fn offset_to_pos(&self, off: usize) -> DocPos;
+
     fn line(&self, idx: usize) -> &str {
         self.get_lines(idx..(idx + 1))[0]
-    }
-
-    /// push a character onto the end
-    fn push(&mut self, ctx: &mut Cursor, c: char) {
-        self.insert_str(ctx, c.encode_utf8(&mut [0; 4]))
-    }
-
-    /// pop a character from the end
-    fn pop(&mut self, ctx: &mut Cursor) -> char {
-        ctx.pos = self.last();
-        ctx.virtpos = ctx.pos;
-        self.delete_char(ctx)
     }
 }
 
@@ -166,11 +164,26 @@ impl Buffer {
     pub fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str> {
         self.text.get_lines(lines)
     }
-    pub fn delete_char(&mut self) -> char {
-        self.text.delete_char(&mut self.cursor)
+    /// delete the character the cursor is on. This is the behavior of 'x' key. The cursor will
+    /// keep its position unless its the last non-lf character of the line, in which case it will
+    /// be clamped to the line.
+    pub fn delete_char(&mut self) -> Option<char> {
+        if self.text.len() == 0 {
+            return None;
+        }
+        let len = self.text.line(self.cursor.pos.y).len();
+        let res = self.text.delete_char(self.cursor.pos);
+        if Some(self.cursor.pos.x) == len.checked_sub(1) {
+            self.cursor.pos.x = self.cursor.pos.x.saturating_sub(1);
+        };
+        Some(res)
     }
+
+    /// delete the character before the cursor's current position. This is the behavior of
+    /// backspace in insert mode.
     pub fn delete_char_before(&mut self) -> Option<char> {
-        self.text.delete_char_before(&mut self.cursor)
+        let new_pos = self.text.offset_to_pos(self.text.pos_to_offset(self.cursor.pos).checked_sub(1)?);
+        Some(self.text.delete_char(new_pos))
     }
     pub fn linecnt(&self) -> usize {
         self.text.linecnt()
@@ -210,12 +223,21 @@ impl Buffer {
     }
 
     /// pop a character from the end
-    pub fn pop(&mut self) -> char {
+    pub fn pop(&mut self) -> Option<char> {
         let last = self.last();
         let cursor = &mut self.cursor;
-        cursor.pos = last;
-        cursor.virtpos = cursor.pos;
+        cursor.set_pos(last);
         self.delete_char()
+    }
+
+    pub fn delete_range(&mut self, range: Range<DocPos>) -> String {
+        let start = self.text.pos_to_offset(range.start);
+        let init_off = self.text.pos_to_offset(self.cursor.pos);
+
+        let deleted = self.text.delete_range(range.clone());
+        let new_pos = init_off - init_off.saturating_sub(start).min(deleted.len());
+        self.cursor.set_pos(self.text.offset_to_pos(new_pos));
+        deleted
     }
 
     /// draw this buffer in a window
@@ -279,6 +301,16 @@ impl Cursor {
     pub fn draw(&self, win: &Window, tui: &mut TermGrid) {
         tui.set_cursorpos(self.term_pos(win));
     }
+
+    /// sets the position and virtual positon to pos, updating topline if moved above but not if
+    /// too far below
+    pub fn set_pos(&mut self, pos: DocPos) {
+        self.pos = pos;
+        self.virtpos = pos;
+        if self.topline > pos.y {
+            self.topline = pos.y
+        }
+    }
 }
 
 pub struct LinesInclusiveIter<'a>(std::str::SplitInclusive<'a, char>);
@@ -320,7 +352,7 @@ impl LinesInclusive for str {
 }
 
 #[cfg(test)]
-pub(crate) mod test {
+pub mod test {
     // declared public to allow export of polytest
     //
     // If I ever make the buffer a type alias rather than a trait, then the polytest macro should
@@ -339,345 +371,214 @@ pub(crate) mod test {
         buf_str
     }
 
-    fn assert_trait_add_str(b: &mut BufferCore, ctx: &mut Cursor, s: &str) {
-        let mut out = Vec::<u8>::new();
-        b.serialize(&mut out).expect("buffer will serialize");
-        let mut buf_str = String::from_utf8(out.clone()).expect("buffer outputs valid utf-8");
-
-        let pos = ctx.pos;
-        let off = pos.x
-            + buf_str
-                .lines_inclusive()
-                .take(pos.y)
-                .map(str::len)
-                .sum::<usize>();
+    #[track_caller]
+    fn assert_insert_str(b: &mut Buffer, s: &str) {
+        let mut buf_str = b.to_string();
+        let off = b.text.pos_to_offset(b.cursor.pos);
         buf_str.replace_range(off..off, s);
-        b.insert_str(ctx, s);
-
-        out.clear();
-        b.serialize(&mut out).expect("buffer will serialize");
-        let out_str = String::from_utf8(out).expect("buffer outputs valid utf-8");
-
+        b.insert_str(s);
         assert_eq!(
-            buf_str, out_str,
+            buf_str, b.to_string(),
             "inserted string == string insert from buffer"
         );
     }
 
-    fn buffer_with_changes() -> BufferCore {
-        let mut b = BufferCore::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
-        let mut ctx = Cursor {
-            pos: DocPos { x: 8, y: 12 },
-            ..Cursor::new()
-        };
-        assert_trait_add_str(&mut b, &mut ctx, "This is some new text");
-        assert_trait_add_str(&mut b, &mut ctx, "This is some more new text");
-        ctx.pos = DocPos { x: 3, y: 9 };
-        assert_trait_add_str(&mut b, &mut ctx, "This is some \nnewline text");
-        assert_trait_add_str(&mut b, &mut ctx, "This is some more newline text\n\n");
-        ctx.pos = DocPos { x: 0, y: 0 };
-        assert_trait_add_str(&mut b, &mut ctx, "Some text at the beginning");
-        ctx.pos = DocPos { x: 0, y: 0 };
-        assert_trait_add_str(&mut b, &mut ctx, "\nope - newl at the beginning");
-        ctx.pos = DocPos { x: 18, y: 1 };
-        assert_trait_add_str(&mut b, &mut ctx, "Middle of another edit");
-        assert_trait_add_str(&mut b, &mut ctx, "and again at the end of the middle");
-
+    fn buffer_with_changes() -> Buffer {
+        let mut b = Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
+        b.cursor.set_pos(DocPos { x: 8, y: 12 });
+        assert_insert_str(&mut b, "This is some new text");
+        assert_insert_str(&mut b, "This is some more new text");
+        b.cursor.set_pos( DocPos { x: 3, y: 9 });
+        assert_insert_str(&mut b, "This is some \nnewline text");
+        assert_insert_str(&mut b, "This is some more newline text\n\n");
+        b.cursor.set_pos( DocPos { x: 0, y: 0 });
+        assert_insert_str(&mut b, "Some text at the beginning");
+        b.cursor.set_pos( DocPos { x: 0, y: 0 });
+        assert_insert_str(&mut b, "\nope - newl at the beginning");
+        b.cursor.set_pos( DocPos { x: 18, y: 1 });
+        assert_insert_str(&mut b, "Middle of another edit");
+        assert_insert_str(&mut b, "and again at the end of the middle");
         b
     }
 
-    #[test]
-    #[ignore = "think about correct behavior"]
-    fn get_lines_blank() {
-        let buf = BufferCore::from_str("");
-        assert_eq!(buf.get_lines(0..1), vec![""]);
-    }
-
-    #[test]
-    fn get_lines_single() {
-        let buf = BufferCore::from_str("asdf");
-        assert_eq!(buf.get_lines(0..1), vec!["asdf"]);
-    }
-
-    #[test]
-    fn get_lines_multiple() {
-        let buf = BufferCore::from_str("asdf\nabcd\nefgh");
-        assert_eq!(buf.get_lines(0..3), vec!["asdf", "abcd", "efgh"]);
-    }
-
-    #[test]
-    fn get_lines_single_middle() {
-        let buf = BufferCore::from_str("asdf\nabcd\nefgh");
-        assert_eq!(buf.get_lines(1..2), vec!["abcd"]);
-    }
-
-    #[test]
-    fn get_lines_multiple_middle() {
-        let buf = BufferCore::from_str("asdf\nabcd\nefgh\n1234");
-        assert_eq!(buf.get_lines(1..3), vec!["abcd", "efgh"]);
-    }
-
-    #[test]
-    fn insert_basic() {
-        let mut buf = BufferCore::from_str("");
-        let mut ctx = Cursor {
-            ..Cursor::new()
+    macro_rules! mkbuf {
+        ($fn:ident) => {
+            $fn()
         };
+        ($str:literal) => {
+            Buffer::from_str($str)
+        }
+    }
 
-        assert_trait_add_str(&mut buf, &mut ctx, "Hello, World");
+    /// get [`DocPos`] of offset in `&str`
+    fn str_doc_pos_off(s: &str, off: usize) -> DocPos {
+        let off = off.min(s.len());
+        s.lines_inclusive().map(str::len).fold((0, DocPos { x: 0, y: 0 }), |(total, doc), l| {
+            if total > off {
+                unreachable!()
+            };
+            if total == off {
+                (total, doc)
+            } else if total + l > off {
+                (off, DocPos {
+                    x: off - total,
+                    ..doc
+                })
+            } else if total + l == off && off == s.len() {
+                (off, DocPos {
+                    x: off - total,
+                    ..doc
+                })
+            } else {
+                (total + l, DocPos {
+                    x: 0,
+                    y: doc.y + 1,
+                })
+            }
+        }).1
     }
 
     #[test]
-    fn insert_blank() {
-        let mut buf = BufferCore::from_str("");
-        let mut ctx = Cursor {
-            ..Cursor::new()
+    fn helper_str_doc_pos_off() {
+        assert_eq!(str_doc_pos_off("as df", 0), DocPos {x: 0, y: 0});
+        assert_eq!(str_doc_pos_off("as df", 1), DocPos {x: 1, y: 0});
+        assert_eq!(str_doc_pos_off("as df", 2), DocPos {x: 2, y: 0});
+        assert_eq!(str_doc_pos_off("as\ndf", 2), DocPos {x: 2, y: 0});
+        assert_eq!(str_doc_pos_off("as\ndf", 3), DocPos {x: 0, y: 1});
+        assert_eq!(str_doc_pos_off("as\ndf", 4), DocPos {x: 1, y: 1});
+        assert_eq!(str_doc_pos_off("as\ndf", 5), DocPos {x: 2, y: 1});
+        assert_eq!(str_doc_pos_off("as\ndf", 6), DocPos {x: 2, y: 1});
+    }
+
+    macro_rules! get_lines_test {
+        ($(#[$meta:meta])* $name:ident, $bufdef:tt, $lines:expr) => {
+            #[test]
+            $(#[$meta])*
+            fn $name() {
+                let buf = mkbuf!($bufdef);
+                let bstr = buf.to_string();
+                let expected: Vec<_> = bstr.lines().skip($lines.start).take($lines.len()).collect();
+                assert_eq!(buf.get_lines($lines), expected, "actual == expected");
+            }
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "");
     }
 
-    #[test]
-    fn insert_multi() {
-        let mut buf = BufferCore::from_str("");
-        let mut ctx = Cursor {
-            ..Cursor::new()
+    get_lines_test!( 
+        #[ignore = "think about correct behavior"]
+        get_lines_blank, "", 0..1
+    );
+    get_lines_test!(get_lines_single, "asdf", 0..1);
+    get_lines_test!(get_lines_multiple, "asdf\nabcd\nefgh", 0..3);
+    get_lines_test!(get_lines_single_middle, "asdf\nabcd\nefgh", 1..2);
+    get_lines_test!(get_lines_multiple_middle, "asdf\nabcd\nefgh\n1234", 1..3);
+    get_lines_test!(get_lines_complex, buffer_with_changes, 3..12);
+
+
+    macro_rules! insert_test {
+        ($name:ident, $init:tt, $($rem:tt),* $(,)?) => {
+            #[test]
+            fn $name() {
+                let mut buf = mkbuf!($init);
+                insert_test!(@recurse buf @ $($rem),*);
+            }
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "Hello, ");
-        assert_trait_add_str(&mut buf, &mut ctx, "World!");
-    }
-
-    #[test]
-    fn insert_newl() {
-        let mut buf = BufferCore::from_str("");
-        let mut ctx = Cursor {
-            ..Cursor::new()
+        (@recurse $buf:ident @ (=> $off:literal) $(, $rem:tt)*) => {
+            $buf.cursor.set_pos(str_doc_pos_off(&$buf.to_string(), $off));
+            insert_test!(@recurse $buf @ $($rem),*);
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
-    }
-
-    #[test]
-    fn insert_multinewl() {
-        let mut buf = BufferCore::from_str("");
-        let mut ctx = Cursor {
-            ..Cursor::new()
+        (@recurse $buf:ident @ $add:expr $(, $rem:tt)*) => {
+            assert_insert_str(&mut $buf, $add);
+            insert_test!(@recurse $buf @ $($rem),*);
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
+        (@recurse $buf:ident @ ) => { };
     }
 
-    #[test]
-    fn insert_offset() {
-        let mut buf = BufferCore::from_str("0123456789");
-        let mut ctx = Cursor {
-            pos: DocPos { x: 5, y: 0 },
-            ..Cursor::new()
+    insert_test!(insert_basic, "", "Hello, World");
+    insert_test!(insert_blank, "", "");
+    insert_test!(insert_multi, "", "Hello, ", "World!");
+    insert_test!(insert_newl, "", "\n");
+    insert_test!(insert_newl_multi, "", "\n", "\n", "\n");
+    insert_test!(insert_offset, "0123456789", (=> 5), "000000");
+    insert_test!(insert_offset_newl, "0123456789", (=> 5), "\n");
+    insert_test!(insert_offset_prenewl, "0123456789", "\n");
+    insert_test!(insert_multiline, "0123456789", "asdf\nzdq\nqwrpi\nmnbv\n", "\n\n\n104a9zlq");
+    insert_test!(insert_multiline_dirty, buffer_with_changes, "asdf\nzdq\nqwrpi\nmnbv\n", "\n\n\n104a9zlq");
+
+
+    macro_rules! chars_fwd_test {
+        ($name: ident, $str:expr, $start:expr) => {
+            #[test]
+            fn $name() {
+                let buf = Buffer::from_str($str);
+                let mut it_test = buf.chars_fwd(str_doc_pos_off($str, $start));
+                let mut idx = $start;
+                for c in $str[$start..].chars() {
+                    assert_eq!(it_test.next(), Some((str_doc_pos_off($str, idx), c)), "actual == expected");
+                    idx += 1;
+                }
+                assert_eq!(it_test.next(), None, "end of iter");
+                assert_eq!(it_test.next(), None, "end of iter 2");
+            }
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "0000000");
     }
 
-    #[test]
-    fn insert_offnewl() {
-        let mut buf = BufferCore::from_str("0123456789");
-        let mut ctx = Cursor {
-            pos: DocPos { x: 5, y: 0 },
-            ..Cursor::new()
+    chars_fwd_test!(chars_fwd_start, "0123456789", 0);
+    chars_fwd_test!(chars_fwd_mid, "0123456789", 5);
+    chars_fwd_test!(chars_fwd_crosslf, "01234\n56789", 0);
+    chars_fwd_test!(chars_fwd_empty, "", 0);
+    chars_fwd_test!(chars_fwd_all_lf, "\n\n\n\n", 1);
+    chars_fwd_test!(chars_fwd_start_eol, "01\n34", 2);
+    chars_fwd_test!(chars_fwd_start_end, "0123456789", 9);
+
+
+    macro_rules! chars_bck_test {
+        ($name: ident, $init:tt, $start:expr) => {
+            #[test]
+            fn $name() {
+                let buf = mkbuf!($init);
+                let bufstr = buf.to_string();
+                let mut it_test = buf.chars_bck(str_doc_pos_off(&bufstr, $start));
+                let mut idx = $start;
+                for c in bufstr[..($start + 1).min(bufstr.len())].chars().rev() {
+                    assert_eq!(it_test.next(), Some((str_doc_pos_off(&bufstr, idx), c)), "actual == expected");
+                    idx = idx.saturating_sub(1);
+                }
+                assert_eq!(it_test.next(), None, "end of iter");
+                assert_eq!(it_test.next(), None, "end of iter 2");
+            }
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    #[test]
-    fn insert_prenewl() {
-        let mut buf = BufferCore::from_str("0123456789");
-        let mut ctx = Cursor {
-            pos: DocPos { x: 0, y: 0 },
-            ..Cursor::new()
+    chars_bck_test!(chars_bck_start, "0123456789", 0);
+    chars_bck_test!(chars_bck_end, "0123456789", 9);
+    chars_bck_test!(chars_bck_crosslf, "0123\n56789", 7);
+    chars_bck_test!(chars_bck_empty, "", 0);
+    chars_bck_test!(chars_bck_all_lf, "\n\n\n\n", 3);
+    chars_bck_test!(chars_bck_start_eol, "01\n34", 2);
+    chars_bck_test!(chars_bck_mid, "0123456789", 5);
+    chars_bck_test!(chars_bck_dirty, buffer_with_changes, 5);
+    chars_bck_test!(chars_bck_dirty2, buffer_with_changes, 80);
+
+    macro_rules! end_tests {
+        ($($(#[$meta:meta])*$name:ident => $bufdef:tt),* $(,)?) => {
+            $(
+            #[test]
+            $(#[$meta])*
+            fn $name() {
+                let buf = mkbuf!($bufdef);
+                let bstr = buf.to_string();
+                let last = str_doc_pos_off(&bstr, bstr.len().saturating_sub(1));
+                assert_eq!(buf.end(), DocPos {x: last.x + 1, ..last});
+            }
+            )*
         };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "\n");
     }
 
-    #[test]
-    fn insert_multilinestr() {
-        let mut buf = BufferCore::from_str("0123456789");
-        let mut ctx = Cursor {
-            ..Cursor::new()
-        };
-
-        assert_trait_add_str(&mut buf, &mut ctx, "asdf\nzdq\nqwrpi\nmnbv\n");
-        assert_trait_add_str(&mut buf, &mut ctx, "\n\n\n104a9zlq");
-    }
-
-    #[test]
-    fn charsfwd_start() {
-        let buf = BufferCore::from_str("0123456789");
-        let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '2')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 0 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 0 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '5')));
-        assert_eq!(it.next(), Some((DocPos { x: 6, y: 0 }, '6')));
-        assert_eq!(it.next(), Some((DocPos { x: 7, y: 0 }, '7')));
-        assert_eq!(it.next(), Some((DocPos { x: 8, y: 0 }, '8')));
-        assert_eq!(it.next(), Some((DocPos { x: 9, y: 0 }, '9')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsfwd_crosslf() {
-        let buf = BufferCore::from_str("01234\n56789");
-        let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '2')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 0 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 0 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '\n')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 1 }, '5')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 1 }, '6')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 1 }, '7')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 1 }, '8')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 1 }, '9')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsfwd_empty() {
-        let buf = BufferCore::from_str("");
-        let mut it = buf.chars_fwd(DocPos { x: 0, y: 0 });
-
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsfwd_eol() {
-        let buf = BufferCore::from_str("01\n34");
-        let mut it = buf.chars_fwd(DocPos { x: 2, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '\n')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 1 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 1 }, '4')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_empty() {
-        let buf = BufferCore::from_str("");
-        let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
-
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_eol() {
-        let buf = BufferCore::from_str("01\n34");
-        let mut it = buf.chars_bck(DocPos { x: 1, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_crosslf() {
-        let buf = BufferCore::from_str("01234\n56789");
-        let mut it = buf.chars_bck(DocPos { x: 4, y: 1 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 1 }, '9')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 1 }, '8')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 1 }, '7')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 1 }, '6')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 1 }, '5')));
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '\n')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 0 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 0 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '2')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_end() {
-        let buf = BufferCore::from_str("0123456789");
-        let mut it = buf.chars_bck(DocPos { x: 9, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 9, y: 0 }, '9')));
-        assert_eq!(it.next(), Some((DocPos { x: 8, y: 0 }, '8')));
-        assert_eq!(it.next(), Some((DocPos { x: 7, y: 0 }, '7')));
-        assert_eq!(it.next(), Some((DocPos { x: 6, y: 0 }, '6')));
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '5')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 0 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 0 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '2')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_mid() {
-        let buf = BufferCore::from_str("0123456789");
-        let mut it = buf.chars_bck(DocPos { x: 5, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 5, y: 0 }, '5')));
-        assert_eq!(it.next(), Some((DocPos { x: 4, y: 0 }, '4')));
-        assert_eq!(it.next(), Some((DocPos { x: 3, y: 0 }, '3')));
-        assert_eq!(it.next(), Some((DocPos { x: 2, y: 0 }, '2')));
-        assert_eq!(it.next(), Some((DocPos { x: 1, y: 0 }, '1')));
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn charsbck_start() {
-        let buf = BufferCore::from_str("0123456789");
-        let mut it = buf.chars_bck(DocPos { x: 0, y: 0 });
-
-        assert_eq!(it.next(), Some((DocPos { x: 0, y: 0 }, '0')));
-        assert_eq!(it.next(), None);
-        assert_eq!(it.next(), None);
-    }
-
-    #[test]
-    fn end_blank() {
-        let buf = BufferCore::from_str("");
-
-        assert_eq!(buf.end(), DocPos { x: 0, y: 0 });
-    }
-
-    #[test]
-    fn end_simple() {
-        let buf = BufferCore::from_str("0123456789");
-
-        assert_eq!(buf.end(), DocPos { x: 10, y: 0 });
-    }
-
-    #[test]
-    #[ignore = "I don't understand it"]
-    fn end_complex() {
-        let buf: BufferCore = buffer_with_changes();
-
-        assert_eq!(buf.end(), DocPos { x: 10, y: 97 });
+    end_tests!{
+        #[ignore = "think about correct behavior"]
+        end_blank => "",
+        end_simple => "0123456789",
+        end_complex => buffer_with_changes,
     }
 
     #[test]
@@ -698,115 +599,124 @@ pub(crate) mod test {
         assert_eq!(buf.last(), DocPos { x: 3, y: 1 })
     }
 
-    #[test]
-    fn delete_char() {
-        let mut buf = BufferCore::from_str("0123456789\nasdf");
-        let expected = "012346789\nasdf";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 5, y: 0 },
-            ..Cursor::new()
+    macro_rules! delete_char_test {
+        ($name:ident, $bufdef:tt, $($pos:expr => $expected_pos:expr),+ $(,)?) => {
+            #[test]
+            fn $name() {
+                let mut buf = mkbuf!($bufdef);
+                let mut expected = buf.to_string();
+                $(
+                buf.cursor.set_pos(str_doc_pos_off(&expected, $pos));
+                let expected_rem = if buf.len() > 0 {
+                    let rem = expected.remove($pos);
+                    eprintln!("removed {rem:?}");
+                    Some(rem)
+                } else { None };
+                assert_eq!(buf.delete_char(), expected_rem, "actual == expected");
+                assert_eq!(buf.cursor.pos, str_doc_pos_off(&expected, $expected_pos));
+                assert_eq!(buf.to_string(), expected);
+                )*
+            }
         };
-        assert_eq!(buf.delete_char(&mut ctx), '5');
-        assert_eq!(ctx.pos, DocPos { x: 4, y: 0 });
-        assert_buf_eq(&buf, expected);
     }
 
-    #[test]
-    fn delete_char_first_of_line() {
-        let mut buf = BufferCore::from_str("0123456789\nasdf");
-        let expected = "0123456789\nsdf";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 0, y: 1 },
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), 'a');
-        assert_eq!(ctx.pos, DocPos { x: 0, y: 1 });
-        assert_buf_eq(&buf, expected);
-    }
-
-    #[test]
-    fn delete_char_newl() {
-        let mut buf = BufferCore::from_str("0123456789\nasdf");
-        let expected = "0123456789asdf";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 10, y: 0 },
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), '\n');
-        assert_eq!(ctx.pos, DocPos { x: 9, y: 0 });
-        assert_buf_eq(&buf, expected);
-    }
-
-    #[test]
-    fn delete_char_just_newl() {
-        let mut buf = BufferCore::from_str("\n\n\n");
-        let expected = "\n\n";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 0, y: 1 },
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), '\n');
-        assert_eq!(ctx.pos, DocPos { x: 0, y: 0 });
-        assert_buf_eq(&buf, expected);
-    }
-
-    #[test]
-    fn delete_char_first() {
-        let mut buf = BufferCore::from_str("asdf");
-        let expected = "sdf";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 0, y: 0 },
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), 'a');
-        assert_eq!(ctx.pos, DocPos { x: 0, y: 0 });
-        assert_buf_eq(&buf, expected);
-    }
-
-    #[test]
-    fn delete_char_only() {
-        let mut buf = BufferCore::from_str(" ");
-        let expected = "";
-        let mut ctx = Cursor {
-            pos: DocPos { x: 0, y: 0 },
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), ' ');
-        assert_eq!(ctx.pos, DocPos { x: 0, y: 0 });
-        assert_buf_eq(&buf, expected);
-    }
-
-    #[test]
-    fn delete_char_only_lf() {
-        let mut buf = BufferCore::from_str("\n");
-        let expected = "";
-        let mut ctx = Cursor {
-            ..Cursor::new()
-        };
-        assert_eq!(buf.delete_char(&mut ctx), '\n');
-        assert_eq!(ctx.pos, DocPos { x: 0, y: 0 });
-        assert_buf_eq(&buf, expected);
-    }
+    delete_char_test!(delete_char_simple, "0123456789\nasdf", 5 => 5);
+    delete_char_test!(delete_char_first_of_line, "0123456789\nasdf", 11 => 11);
+    delete_char_test!(delete_char_newl, "0123456789\nasdf", 10 => 10);
+    delete_char_test!(delete_char_last_of_line, "0123456789\nasdf", 9 => 8, 8 => 7, 7 => 6);
+    delete_char_test!(delete_char_last_of_buf, "0123456789\nasdf", 14 => 13, 13 => 12, 12 => 11);
+    delete_char_test!(delete_char_last_of_line2, "0123\n56789\nasdf", 9 => 8, 8 => 7, 7 => 6);
+    delete_char_test!(delete_char_just_newl, "\n\n\n", 1 => 1);
+    delete_char_test!(delete_char_first, "asdf", 0 => 0);
+    delete_char_test!(delete_char_only, " ", 0 => 0);
+    delete_char_test!(delete_char_only_lf, "\n", 0 => 0);
+    delete_char_test!(delete_char_empty, "", 0 => 0);
 
     #[test]
     fn len() {
         let init = "this is a buffer\nasdfasdfasdfa";
-        let buf = BufferCore::from_str(init);
+        let buf = Buffer::from_str(init);
         assert_eq!(buf.len(), init.len());
     }
 
     #[test]
     fn clear() {
-        let mut buf = BufferCore::from_str("this is a buffer\nit will be cleared.");
-        let mut ctx = Cursor {
-            pos: DocPos { x: 5, y: 1 },
-            ..Cursor::new()
-        };
-        buf.clear(&mut ctx);
+        let mut buf = Buffer::from_str("this is a buffer\nit will be cleared.");
+        buf.clear();
         assert_eq!(&buf.to_string(), "");
-        assert_eq!(ctx.pos, DocPos::new());
+        assert_eq!(buf.cursor.pos, DocPos::new());
         assert_eq!(buf.len(), 0);
     }
+
+
+    macro_rules! delete_range_test {
+        ($name:ident, $str:literal, $range:expr, $cursor:expr) => {
+            #[test]
+            fn $name() {
+                let mut buf = Buffer::from_str($str);
+                buf.cursor.set_pos(str_doc_pos_off($str, $cursor));
+                let start = str_doc_pos_off($str, $range.start);
+                let end = str_doc_pos_off($str, $range.end);
+                let expected_deleted = &$str[$range];
+                let mut expected_remain = String::from($str);
+                expected_remain.replace_range($range, "");
+                let deleted = buf.delete_range(start..end);
+                assert_eq!(&deleted, expected_deleted);
+                assert_eq!(buf.to_string(), expected_remain);
+                assert_eq!(buf.cursor.pos, str_doc_pos_off($str, $cursor - ($cursor as
+                    usize).saturating_sub($range.start).min($range.len())));
+            }
+        };
+    }
+
+    delete_range_test!(delete_range_simple,                "simple buffer", 2..8, 0);
+    delete_range_test!(delete_range_simple_cursor_start,   "simple buffer", 2..8, 2);
+    delete_range_test!(delete_range_simple_cursor_in,      "simple buffer", 2..8, 4);
+    delete_range_test!(delete_range_simple_cursor_last,    "simple buffer", 2..8, 7);
+    delete_range_test!(delete_range_simple_cursor_end,     "simple buffer", 2..8, 8);
+    delete_range_test!(delete_range_simple_cursor_after,   "simple buffer", 2..8, 10);
+    delete_range_test!(delete_range_simple_all,            "simple buffer", 0..13, 5);
+    delete_range_test!(delete_range_2line,                 "2 line\nbuffer", 2..8, 0);
+    delete_range_test!(delete_range_2line_to_lf,           "2 line\nbuffer", 2..7, 0);
+    delete_range_test!(delete_range_2line_to_lf_c_end,     "2 line\nbuffer", 2..7, 7);
+    delete_range_test!(delete_range_2line_to_lf_past_end,  "2 line\nbuffer", 2..7, 8);
+    delete_range_test!(delete_range_2line_to_lf_c_at_lf,   "2 line\nbuffer", 2..7, 6);
+    delete_range_test!(delete_range_2line_cursor_start,    "2 line\nbuffer", 2..8, 2);
+    delete_range_test!(delete_range_2line_cursor_in,       "2 line\nbuffer", 2..8, 4);
+    delete_range_test!(delete_range_2line_cursor_last,     "2 line\nbuffer", 2..8, 7);
+    delete_range_test!(delete_range_2line_cursor_end,      "2 line\nbuffer", 2..8, 8);
+    delete_range_test!(delete_range_2line_cursor_after,    "2 line\nbuffer", 2..8, 10);
+    delete_range_test!(delete_range_2line_all,             "2 line\nbuffer", 0..13, 10);
+    delete_range_test!(delete_range_empty,                 "", 0..0, 0);
+
+
+    macro_rules! pos_delta_test {
+        ($name:ident, $str:expr, $start:expr, $off:expr) => {
+            #[test]
+            fn $name() {
+                let buf = Buffer::from_str($str);
+                let start_idx = ($start as usize).min(buf.len().saturating_sub(1));
+                let start = str_doc_pos_off($str, start_idx);
+                let expected = str_doc_pos_off($str, start_idx.saturating_add_signed($off).min(buf.len().saturating_sub(1)));
+                assert_eq!(buf.text.pos_delta(start, $off), expected, "actual == expected")
+            }
+        };
+    }
+
+    pos_delta_test!(offset_pos_one_line_forward,  "simple buffer", 5, 3);
+    pos_delta_test!(offset_pos_one_line_backward, "simple buffer", 4, -3);
+    pos_delta_test!(offset_pos_multiline_fwd,     "simple\nbuffer", 4, 4);
+    pos_delta_test!(offset_pos_multiline_bck,     "simple\nbuffer", 9, -4);
+    pos_delta_test!(offset_pos_before_start,      "simple buffer", 8, -12);
+    pos_delta_test!(offset_pos_start_past_end,    "simple buffer", 22, -3);
+    pos_delta_test!(offset_pos_start_past_end2,   "simple buffer", 22, -14);
+    pos_delta_test!(offset_pos_go_past_end,       "simple buffer", 5, 14);
+    pos_delta_test!(offset_pos_no_move,           "simple buffer", 5, 0);
+    pos_delta_test!(offset_pos_no_move_on_lf,     "simple\nbuffer", 6, 0);
+    pos_delta_test!(offset_pos_empty,             "", 0, 0);
+    pos_delta_test!(offset_pos_empty_fwd,         "", 0, 2);
+    pos_delta_test!(offset_pos_empty_bck,         "", 0, -2);
+
 
     mod lines_inclusive {
         use super::*;

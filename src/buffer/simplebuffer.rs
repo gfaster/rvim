@@ -3,7 +3,7 @@ use std::{
     cell::{Cell, RefCell},
     default,
     os::unix::prelude::OsStrExt,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, ops::Range,
 };
 
 use super::{BufCore, DocPos};
@@ -77,25 +77,11 @@ impl super::BufCore for SimpleBuffer {
         out
     }
 
-    fn delete_char(&mut self, ctx: &mut Cursor) -> char {
-        let off = self.to_fileoff(ctx.pos);
+    fn delete_char(&mut self, pos: DocPos) -> char {
+        let off = self.to_fileoff(pos);
         let c = self.data.remove(off);
         self.outdated_lines.set(true);
-        if c == '\n' {
-            self.update_bufctx(ctx, off.saturating_sub(1));
-        } else {
-            ctx.pos.x = ctx.pos.x.saturating_sub(1);
-            ctx.virtpos = ctx.pos;
-        }
         c
-    }
-
-    fn delete_char_before(&mut self, ctx: &mut Cursor) -> Option<char> {
-        let off = self.to_fileoff(ctx.pos).checked_sub(1)?;
-        let c = self.data.remove(off);
-        self.outdated_lines.set(true);
-        self.update_bufctx(ctx, off);
-        Some(c)
     }
 
     fn get_off(&self, pos: super::DocPos) -> usize {
@@ -163,6 +149,29 @@ impl super::BufCore for SimpleBuffer {
     fn set_path(&mut self, path: std::path::PathBuf) {
         self.path = Some(path);
     }
+
+    fn delete_range(&mut self, rng: Range<DocPos>) -> String {
+        let start = self.to_fileoff(rng.start);
+        let end = self.to_fileoff(rng.end);
+        let old = self.data[start..end].to_owned();
+        self.data.replace_range(start..end, "");
+        self.outdated_lines.set(true);
+        old
+    }
+
+    fn offset_to_pos(&self, off: usize) -> DocPos {
+        self.off_to_docpos(off)
+    }
+
+    fn pos_delta(&self, pos: DocPos, off: isize) -> DocPos {
+        let start = self.to_fileoff(pos);
+        let end = start.saturating_add_signed(off);
+        self.off_to_docpos(end)
+    }
+
+    fn pos_to_offset(&self, pos: DocPos) -> usize {
+        self.to_fileoff(pos)
+    }
 }
 
 // helpers
@@ -197,7 +206,9 @@ impl SimpleBuffer {
             .find(|&(_, &l)| l > off)
             .map_or(lines.len(), |(i, _)| i)
             .saturating_sub(1);
-        let x = off - lines.get(y).unwrap_or(&lines.len());
+        let y_off = lines.get(y).or(lines.last()).unwrap_or(&0);
+        let line_len = lines.get(y + 1).unwrap_or(&self.data.len()) - y_off;
+        let x = (off - y_off).min(line_len.saturating_sub(1));
         DocPos { x, y }
     }
 
