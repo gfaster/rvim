@@ -49,7 +49,7 @@ impl Command {
             _ => {
                 write!(ctx.warning(), "not yet implemented")?;
                 Ok(())
-            },
+            }
         }
     }
 }

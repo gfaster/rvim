@@ -10,6 +10,7 @@ use crate::Mode;
 #[derive(PartialEq, Eq, Debug)]
 pub enum Operation {
     Change,
+    Delete,
     Replace(String),
     Insert(String),
     DeleteBefore,
@@ -298,7 +299,7 @@ mod syn {
         debug: Normal = ('p') => Operation::Debug,
 
         change: Normal = ('c' {motion}) => Operation::Change,
-        delete: Normal = ('d' {motion}) => Operation::DeleteBefore,
+        delete: Normal = ('d' {motion}) => Operation::Delete,
 
 
         left: Motion = ('h') => Motion::ScreenSpace { dy: 0, dx: -1 },
@@ -308,7 +309,34 @@ mod syn {
 
         recenter: Normal = ('z' 'z') => Operation::RecenterView,
 
-        inner_word: TextObject = ('i' 'w') => Motion::TextObj(textobj::inner_word_object),
+        inner_word:      TextObject = ('i' 'w') => Motion::TextObj(textobj::inner_word),
+        a_word:          TextObject = ('a' 'w') => Motion::TextObj(textobj::a_word),
+        inner_paragraph: TextObject = ('i' 'p') => Motion::TextObj(textobj::inner_paragraph),
+        // a_paragraph:     TextObject = ('a' 'p') => Motion::TextObj(textobj::a_paragraph),
+        inner_sentence:  TextObject = ('i' 's') => Motion::TextObj(textobj::inner_sentence),
+        a_sentence:      TextObject = ('a' 's') => Motion::TextObj(textobj::a_sentence),
+        inner_paren:     TextObject = ('i' 'b') => Motion::TextObj(textobj::inner_paren),
+        inner_paren:     TextObject = ('i' '(') => Motion::TextObj(textobj::inner_paren),
+        inner_paren:     TextObject = ('i' ')') => Motion::TextObj(textobj::inner_paren),
+        a_paren:         TextObject = ('a' 'b') => Motion::TextObj(textobj::a_paren),
+        a_paren:         TextObject = ('a' '(') => Motion::TextObj(textobj::a_paren),
+        a_paren:         TextObject = ('a' ')') => Motion::TextObj(textobj::a_paren),
+        inner_curly:     TextObject = ('i' 'B') => Motion::TextObj(textobj::inner_curly),
+        inner_curly:     TextObject = ('i' '{') => Motion::TextObj(textobj::inner_curly),
+        inner_curly:     TextObject = ('i' '}') => Motion::TextObj(textobj::inner_curly),
+        a_curly:         TextObject = ('a' 'B') => Motion::TextObj(textobj::a_curly),
+        a_curly:         TextObject = ('a' '{') => Motion::TextObj(textobj::a_curly),
+        a_curly:         TextObject = ('a' '}') => Motion::TextObj(textobj::a_curly),
+        inner_bracket:   TextObject = ('i' '[') => Motion::TextObj(textobj::inner_bracket),
+        inner_bracket:   TextObject = ('i' ']') => Motion::TextObj(textobj::inner_bracket),
+        a_bracket:       TextObject = ('a' '[') => Motion::TextObj(textobj::a_bracket),
+        a_bracket:       TextObject = ('a' ']') => Motion::TextObj(textobj::a_bracket),
+        inner_quote:     TextObject = ('i' '"') => Motion::TextObj(textobj::inner_quote),
+        a_quote:         TextObject = ('a' '"') => Motion::TextObj(textobj::a_quote),
+        inner_tick:      TextObject = ('i' '\'') => Motion::TextObj(textobj::inner_tick),
+        a_tick:          TextObject = ('a' '\'') => Motion::TextObj(textobj::a_tick),
+        inner_backtick:  TextObject = ('i' '`') => Motion::TextObj(textobj::inner_backtick),
+        a_backtick:      TextObject = ('a' '`') => Motion::TextObj(textobj::a_backtick),
 
         start_of_line:           Motion = ('0') => Motion::TextMotion(motions::start_of_line),
         word_subset_backward:    Motion = ('b') => Motion::TextMotion(motions::word_subset_backward),

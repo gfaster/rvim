@@ -141,12 +141,7 @@ impl CommandLine {
             other_ctx: Cursor::new(),
             typ: CommandType::None,
             output_buf: Buffer::new(),
-            window: Window::new_withdim(
-                TermPos { x: 0, y: h - 2 },
-                w,
-                2,
-                components,
-            ),
+            window: Window::new_withdim(TermPos { x: 0, y: h - 2 }, w, 2, components),
             output_severity: Default::default(),
         }
     }

@@ -1,10 +1,5 @@
 use crate::prelude::*;
 
-pub enum TextObjectModifier {
-    Inner,
-    All,
-}
-
 /// Enum of the various types of motions, using a trait object because that feels more semantically
 /// appropriate
 ///
@@ -17,6 +12,7 @@ pub enum Motion {
     TextMotion(TextMotion),
 }
 
+// keeping position as separate argument for potential future proofing
 pub type TextMotion = fn(&Buffer, DocPos) -> Option<DocPos>;
 pub type TextObject = fn(&Buffer, DocPos) -> Option<DocRange>;
 
@@ -25,6 +21,7 @@ enum WordCat {
     Word,
     WordExt,
     Whitespace,
+    Lf,
 }
 
 trait Word {
@@ -44,6 +41,8 @@ trait Word {
             WordCat::Whitespace
         }
     }
+
+    fn is_sentence_delim(&self) -> bool;
 }
 
 impl Word for char {
@@ -53,6 +52,10 @@ impl Word for char {
 
     fn is_wordchar_extended(&self) -> bool {
         !self.is_whitespace()
+    }
+
+    fn is_sentence_delim(&self) -> bool {
+        matches!(self, '.' | '!' | '?')
     }
 }
 
@@ -206,32 +209,275 @@ pub fn text_object_from_motion(motion: TextMotion, buf: &Buffer, off: DocPos) ->
     let finish = motion(buf, off)?;
     if finish < off {
         Some(DocRange {
+            start_inclusive: true,
             start: finish,
             end: off,
+            end_inclusive: true,
         })
     } else {
         Some(DocRange {
+            start_inclusive: true,
             start: off,
             end: finish,
+            end_inclusive: true,
         })
     }
 }
 
-pub fn inner_word_object(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
-    let first = buf.char_at(pos).unwrap();
+pub fn inner_word(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let first = buf.char_at(pos).expect("calling on valid pos");
     let start = buf
         .chars_bck(pos)
-        .skip(1)
         .skip_while(|c| c.1.category() == first.category())
-        .next()?
-        .0;
+        .next()
+        .map_or(DocPos { x: 0, y: 0 }, |(pos, _)| pos);
     let end = buf
         .chars_fwd(pos)
-        .skip(1)
         .skip_while(|c| c.1.category() == first.category())
+        .next()
+        .map_or_else(|| buf.end(), |(pos, _)| pos);
+
+    Some(DocRange {
+        start_inclusive: false,
+        start,
+        end,
+        end_inclusive: false,
+    })
+}
+
+pub fn a_word(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let mut found_white_space = false;
+    let first = buf.char_at(pos).expect("calling on valid pos");
+
+    let end = buf
+        .chars_fwd(pos)
+        .skip_while(|c| c.1.category() == first.category())
+        .skip_while(|c| {
+            if c.1.category() == WordCat::Whitespace {
+                found_white_space = true;
+                true
+            } else {
+                false
+            }
+        })
+        .next()
+        .map_or_else(|| buf.end(), |(pos, _)| pos);
+
+    let start = buf
+        .chars_bck(pos)
+        .skip_while(|c| c.1.category() == first.category())
+        .skip_while(|c| !found_white_space && c.1.category() == WordCat::Whitespace)
+        .next()
+        .map_or(DocPos { x: 0, y: 0 }, |(pos, _)| pos);
+
+    Some(DocRange {
+        start_inclusive: false,
+        start,
+        end,
+        end_inclusive: false,
+    })
+}
+
+pub fn inner_paragraph(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let lines = buf.get_lines(0..buf.linecnt());
+    let first = lines.get(pos.y).expect("valid pos").trim();
+    let is_para = first.len() > 0;
+    let mut start = pos.y;
+    for (i, line) in lines[..pos.y].iter().enumerate().rev() {
+        if (line.trim().len() > 0) != is_para {
+            break;
+        }
+        start = i;
+    }
+    let start = DocPos { x: 0, y: start };
+    let mut end = pos.y;
+    for (i, line) in lines[pos.y..].iter().enumerate() {
+        if (line.trim().len() > 0) != is_para {
+            break;
+        }
+        end = i + pos.y;
+    }
+    let end = DocPos {
+        x: lines[end].len(),
+        y: end,
+    };
+    Some(DocRange {
+        start_inclusive: true,
+        start,
+        end,
+        end_inclusive: false,
+    })
+}
+
+pub fn inner_sentence(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let mut cnt = 1;
+    let start = buf
+        .chars_bck(pos)
+        .skip_while(|c| {
+            c.1 != '\n' && {
+                cnt -= 1;
+                cnt >= 0
+            }
+        }) // skip one back but not if it's lf
+        .skip_while(|c| !c.1.is_sentence_delim() && c.1 != '\n')
+        .next()
+        .map_or(DocPos { x: 0, y: 0 }, |(pos, _)| pos);
+    let mut it = buf.chars_fwd(pos).peekable();
+    let mut end = pos;
+    while let Some(c) = it.next() {
+        end = c.0;
+        if c.1.is_sentence_delim()
+            && it
+                .peek()
+                .map_or(true, |p| p.1.category() == WordCat::Whitespace)
+        {
+            break;
+        }
+    }
+    Some(DocRange {
+        start_inclusive: false,
+        start,
+        end,
+        end_inclusive: false,
+    })
+}
+
+pub fn a_sentence(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    let mut cnt = 1;
+    let start = buf
+        .chars_bck(pos)
+        .skip_while(|c| {
+            c.1 != '\n' && {
+                cnt -= 1;
+                cnt >= 0
+            }
+        }) // skip one back but not if it's lf
+        .skip_while(|c| !c.1.is_sentence_delim() && c.1 != '\n')
+        .next()
+        .map_or(DocPos { x: 0, y: 0 }, |(pos, _)| pos);
+    let mut it = buf.chars_fwd(pos).peekable();
+    let mut end = pos;
+    while let Some(c) = it.next() {
+        end = c.0;
+        if c.1.is_sentence_delim()
+            && it
+                .peek()
+                .map_or(true, |p| p.1.category() == WordCat::Whitespace)
+        {
+            break;
+        }
+    }
+    Some(DocRange {
+        start_inclusive: false,
+        start,
+        end,
+        end_inclusive: true,
+    })
+}
+pub fn inner_paren(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '(', ')', true)
+}
+
+pub fn a_paren(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '(', ')', false)
+}
+
+pub fn inner_curly(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '{', '}', true)
+}
+
+pub fn a_curly(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '{', '}', false)
+}
+
+pub fn inner_bracket(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '[', ']', true)
+}
+
+pub fn a_bracket(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '[', ']', false)
+}
+
+pub fn inner_quote(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '"', '"', true)
+}
+
+pub fn a_quote(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '"', '"', false)
+}
+
+pub fn inner_tick(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '\'', '\'', true)
+}
+
+pub fn a_tick(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '\'', '\'', false)
+}
+
+pub fn inner_backtick(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '`', '`', true)
+}
+
+pub fn a_backtick(buf: &Buffer, pos: DocPos) -> Option<DocRange> {
+    delim_text_object(buf, pos, '`', '`', false)
+}
+
+// FIXME: it can't handle "[]S[]" (starting at 'S')
+#[inline(always)]
+fn delim_text_object(
+    buf: &Buffer,
+    pos: DocPos,
+    open: char,
+    close: char,
+    inner: bool,
+) -> Option<DocRange> {
+    let mut right_stack = 0;
+    let mut do_skip = false;
+    let end = buf
+        .chars_fwd(pos)
+        .skip_while(|c| {
+            if c.1 == close {
+                if right_stack == 0 {
+                    if c.0 == pos {
+                        do_skip = true
+                    }
+                    return false;
+                } else {
+                    right_stack -= 1;
+                };
+            } else if c.1 == open {
+                right_stack += 1;
+            }
+            true
+        })
         .next()?
         .0;
-    Some(DocRange { start, end })
+
+    let mut left_stack = 0;
+    let start = buf
+        .chars_bck(pos)
+        .skip(if do_skip { 1 } else { 0 })
+        .skip_while(|c| {
+            if c.1 == open {
+                if left_stack == 0 {
+                    return false;
+                } else {
+                    left_stack -= 1;
+                };
+            } else if c.1 == close {
+                left_stack += 1;
+            }
+            true
+        })
+        .next()?
+        .0;
+
+    Some(DocRange {
+        start_inclusive: inner,
+        start,
+        end,
+        end_inclusive: inner,
+    })
 }
 
 #[cfg(test)]

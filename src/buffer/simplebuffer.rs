@@ -2,8 +2,9 @@ use crate::{debug::log, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     default,
+    ops::Range,
     os::unix::prelude::OsStrExt,
-    path::{Path, PathBuf}, ops::Range,
+    path::{Path, PathBuf},
 };
 
 use super::{BufCore, DocPos};
@@ -63,7 +64,7 @@ impl super::BufCore for SimpleBuffer {
         let mut out = Vec::with_capacity(lines.len());
         let line_nums = self.line_nums();
         if line_nums.len() == 0 {
-            return Vec::new()
+            return Vec::new();
         }
         let mut it = line_nums[lines.clone()].iter().peekable();
         while let Some(&start) = it.next() {
@@ -150,9 +151,19 @@ impl super::BufCore for SimpleBuffer {
         self.path = Some(path);
     }
 
-    fn delete_range(&mut self, rng: Range<DocPos>) -> String {
-        let start = self.to_fileoff(rng.start);
-        let end = self.to_fileoff(rng.end);
+    fn delete_range(&mut self, range: impl std::ops::RangeBounds<DocPos>) -> String {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(p) => self.pos_to_offset(*p),
+            std::ops::Bound::Excluded(p) => self.pos_to_offset(*p) + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            std::ops::Bound::Included(p) => self.pos_to_offset(*p).min(self.data.len()),
+            std::ops::Bound::Excluded(p) => self.pos_to_offset(*p),
+            std::ops::Bound::Unbounded => self.data.len(),
+        };
+        assert!(start <= end);
+        debug_assert!(end <= self.data.len());
         let old = self.data[start..end].to_owned();
         self.data.replace_range(start..end, "");
         self.outdated_lines.set(true);

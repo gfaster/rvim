@@ -13,7 +13,6 @@ use enum_dispatch::enum_dispatch;
 use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
 
-
 #[derive(Default, Debug)]
 struct Padding {
     top: u32,
@@ -200,7 +199,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new( tui: &TermGrid) -> Self {
+    pub fn new(tui: &TermGrid) -> Self {
         let components = vec![Component::RelLineNumbers(RelLineNumbers)];
         let (w, h) = tui.dim();
         Self::new_withdim(TermPos { x: 0, y: 0 }, w, h, components)
@@ -335,16 +334,27 @@ impl Window {
     pub fn draw_buf_colored(&self, ctx: &Ctx, buf: &Buffer, color: Color) {
         {
             let mut tui = ctx.tui.borrow_mut();
-            let range = buf.cursor.topline..(buf.cursor.topline + self.height() as usize);
-            for (y, line) in buf.get_lines(range.clone()).into_iter().chain(std::iter::repeat("")).take(range.len()).enumerate() {
+            let range = buf.cursor.topline
+                ..(buf.cursor.topline + self.height() as usize).min(buf.linecnt());
+            for (y, line) in buf
+                .get_lines(range.clone())
+                .into_iter()
+                .chain(std::iter::repeat(""))
+                .take(self.height() as usize)
+                .enumerate()
+            {
                 // log!("{line:?}");
-                tui.write_line(y as u32 + self.bounds.start.y, self.bounds.xrng(), color, line);
+                tui.write_line(
+                    y as u32 + self.bounds.start.y,
+                    self.bounds.xrng(),
+                    color,
+                    line,
+                );
             }
             buf.cursor.draw(self, &mut tui)
         }
         self.components.iter().for_each(|x| x.draw(self, &buf, ctx));
     }
-
 
     pub fn move_cursor(&mut self, buf: &mut Buffer, dx: isize, dy: isize) {
         let newy = buf

@@ -1,6 +1,9 @@
-use std::{fmt::{Write, Display}, ops::Range};
-use crate::{prelude::*, render::BufId, window::Window, term::TermPos};
-use std::{ops::RangeBounds, cell::Cell};
+use crate::{prelude::*, render::BufId, term::TermPos, window::Window};
+use std::{cell::Cell, ops::RangeBounds};
+use std::{
+    fmt::{Display, Write},
+    ops::Range,
+};
 
 /// Position in a document - similar to TermPos but distinct enough semantically to deserve its own
 /// struct. In the future, wrapping will mean that DocPos and TermPos will often not correspond
@@ -27,20 +30,41 @@ impl DocPos {
     }
 }
 
-/// A half-open range of [`DocPos`]
+/// A variably-open range of [`DocPos`]
 #[derive(Debug, Clone, Copy)]
 pub struct DocRange {
+    pub start_inclusive: bool,
     pub start: DocPos,
     pub end: DocPos,
+    pub end_inclusive: bool,
+}
+
+impl DocRange {
+    pub fn from_range(range: Range<DocPos>) -> Self {
+        Self {
+            start_inclusive: true,
+            start: range.start,
+            end: range.end,
+            end_inclusive: false,
+        }
+    }
 }
 
 impl RangeBounds<DocPos> for DocRange {
     fn start_bound(&self) -> std::ops::Bound<&DocPos> {
-        std::ops::Bound::Included(&self.start)
+        if self.start_inclusive {
+            std::ops::Bound::Included(&self.start)
+        } else {
+            std::ops::Bound::Excluded(&self.start)
+        }
     }
 
     fn end_bound(&self) -> std::ops::Bound<&DocPos> {
-        std::ops::Bound::Excluded(&self.end)
+        if self.end_inclusive {
+            std::ops::Bound::Included(&self.end)
+        } else {
+            std::ops::Bound::Excluded(&self.end)
+        }
     }
 }
 
@@ -91,7 +115,7 @@ pub trait BufCore: Sized {
     /// this is the functionality for `x` normal command, I need to think if this is the right
     /// place to put this behavior
     fn delete_char(&mut self, pos: DocPos) -> char;
-    fn delete_range(&mut self, rng: Range<DocPos>) -> String;
+    fn delete_range(&mut self, rng: impl RangeBounds<DocPos>) -> String;
     fn get_off(&self, pos: DocPos) -> usize;
     fn linecnt(&self) -> usize;
     fn end(&self) -> DocPos;
@@ -138,22 +162,34 @@ pub struct Buffer {
 
 impl Display for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <BufferCore as Display>::fmt( &self.text , f)
+        <BufferCore as Display>::fmt(&self.text, f)
     }
 }
 
 impl Buffer {
     pub fn new() -> Self {
-        Buffer { cursor: Cursor::new(), text: BufferCore::new() }
+        Buffer {
+            cursor: Cursor::new(),
+            text: BufferCore::new(),
+        }
     }
-    pub fn open( file: &std::path::Path) -> std::io::Result<Self> {
-        Ok(Buffer { cursor: Cursor::new(), text: BufferCore::open(file)? })
+    pub fn open(file: &std::path::Path) -> std::io::Result<Self> {
+        Ok(Buffer {
+            cursor: Cursor::new(),
+            text: BufferCore::open(file)?,
+        })
     }
-    pub fn from_string( s: String) -> Self {
-        Buffer { cursor: Cursor::new(), text: BufferCore::from_string(s) }
+    pub fn from_string(s: String) -> Self {
+        Buffer {
+            cursor: Cursor::new(),
+            text: BufferCore::from_string(s),
+        }
     }
-    pub fn from_str( s: &str) -> Self {
-        Buffer { cursor: Cursor::new(), text: BufferCore::from_str(s) }
+    pub fn from_str(s: &str) -> Self {
+        Buffer {
+            cursor: Cursor::new(),
+            text: BufferCore::from_str(s),
+        }
     }
     pub fn name(&self) -> &str {
         self.text.name()
@@ -182,7 +218,10 @@ impl Buffer {
     /// delete the character before the cursor's current position. This is the behavior of
     /// backspace in insert mode.
     pub fn delete_char_before(&mut self) -> Option<char> {
-        let new_pos = self.text.offset_to_pos(self.text.pos_to_offset(self.cursor.pos).checked_sub(1)?);
+        let new_pos = self
+            .text
+            .offset_to_pos(self.text.pos_to_offset(self.cursor.pos).checked_sub(1)?);
+        self.cursor.set_pos(new_pos);
         Some(self.text.delete_char(new_pos))
     }
     pub fn linecnt(&self) -> usize {
@@ -216,10 +255,10 @@ impl Buffer {
         self.get_lines(idx..(idx + 1))[0]
     }
 
-
     /// push a character onto the end
     pub fn push(&mut self, c: char) {
-        self.text.insert_str(&mut self.cursor, c.encode_utf8(&mut [0; 4]))
+        self.text
+            .insert_str(&mut self.cursor, c.encode_utf8(&mut [0; 4]))
     }
 
     /// pop a character from the end
@@ -230,11 +269,16 @@ impl Buffer {
         self.delete_char()
     }
 
-    pub fn delete_range(&mut self, range: Range<DocPos>) -> String {
-        let start = self.text.pos_to_offset(range.start);
+    pub fn delete_range(&mut self, range: impl RangeBounds<DocPos>) -> String {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(p) => self.text.pos_to_offset(*p),
+            std::ops::Bound::Excluded(p) => self.text.pos_to_offset(*p) + 1,
+            std::ops::Bound::Unbounded => 0,
+        }
+        .min(self.text.len());
         let init_off = self.text.pos_to_offset(self.cursor.pos);
 
-        let deleted = self.text.delete_range(range.clone());
+        let deleted = self.text.delete_range(range);
         let new_pos = init_off - init_off.saturating_sub(start).min(deleted.len());
         self.cursor.set_pos(self.text.offset_to_pos(new_pos));
         deleted
@@ -288,7 +332,6 @@ impl Cursor {
         let y = y + win.bounds().start.y;
         TermPos { x, y }
     }
-
 
     pub fn new() -> Self {
         Self {
@@ -378,7 +421,8 @@ pub mod test {
         buf_str.replace_range(off..off, s);
         b.insert_str(s);
         assert_eq!(
-            buf_str, b.to_string(),
+            buf_str,
+            b.to_string(),
             "inserted string == string insert from buffer"
         );
     }
@@ -388,14 +432,14 @@ pub mod test {
         b.cursor.set_pos(DocPos { x: 8, y: 12 });
         assert_insert_str(&mut b, "This is some new text");
         assert_insert_str(&mut b, "This is some more new text");
-        b.cursor.set_pos( DocPos { x: 3, y: 9 });
+        b.cursor.set_pos(DocPos { x: 3, y: 9 });
         assert_insert_str(&mut b, "This is some \nnewline text");
         assert_insert_str(&mut b, "This is some more newline text\n\n");
-        b.cursor.set_pos( DocPos { x: 0, y: 0 });
+        b.cursor.set_pos(DocPos { x: 0, y: 0 });
         assert_insert_str(&mut b, "Some text at the beginning");
-        b.cursor.set_pos( DocPos { x: 0, y: 0 });
+        b.cursor.set_pos(DocPos { x: 0, y: 0 });
         assert_insert_str(&mut b, "\nope - newl at the beginning");
-        b.cursor.set_pos( DocPos { x: 18, y: 1 });
+        b.cursor.set_pos(DocPos { x: 18, y: 1 });
         assert_insert_str(&mut b, "Middle of another edit");
         assert_insert_str(&mut b, "and again at the end of the middle");
         b
@@ -407,47 +451,88 @@ pub mod test {
         };
         ($str:literal) => {
             Buffer::from_str($str)
+        };
+    }
+
+    fn normalize_range(s: &str, rng: impl RangeBounds<usize>) -> Range<usize> {
+        let start = match rng.start_bound() {
+            std::ops::Bound::Included(i) => *i,
+            std::ops::Bound::Excluded(i) => *i + 1,
+            std::ops::Bound::Unbounded => 0,
+        }
+        .min(s.len());
+        let end = match rng.end_bound() {
+            std::ops::Bound::Included(i) => *i + 1,
+            std::ops::Bound::Excluded(i) => *i,
+            std::ops::Bound::Unbounded => s.len(),
+        }
+        .clamp(start, s.len());
+        start..end
+    }
+
+    fn make_docrange(s: &str, rng: impl RangeBounds<usize>) -> DocRange {
+        let (start, start_inclusive) = match rng.start_bound() {
+            std::ops::Bound::Included(i) => (*i, true),
+            std::ops::Bound::Excluded(i) => (*i + 1, false),
+            std::ops::Bound::Unbounded => (0, true),
+        };
+        let (end, end_inclusive) = match rng.end_bound() {
+            std::ops::Bound::Included(i) => (*i + 1, true),
+            std::ops::Bound::Excluded(i) => (*i, false),
+            std::ops::Bound::Unbounded => (s.len(), false),
+        };
+        DocRange {
+            start_inclusive,
+            start: str_doc_pos_off(s, start),
+            end: str_doc_pos_off(s, end),
+            end_inclusive,
         }
     }
 
     /// get [`DocPos`] of offset in `&str`
     fn str_doc_pos_off(s: &str, off: usize) -> DocPos {
         let off = off.min(s.len());
-        s.lines_inclusive().map(str::len).fold((0, DocPos { x: 0, y: 0 }), |(total, doc), l| {
-            if total > off {
-                unreachable!()
-            };
-            if total == off {
-                (total, doc)
-            } else if total + l > off {
-                (off, DocPos {
-                    x: off - total,
-                    ..doc
-                })
-            } else if total + l == off && off == s.len() {
-                (off, DocPos {
-                    x: off - total,
-                    ..doc
-                })
-            } else {
-                (total + l, DocPos {
-                    x: 0,
-                    y: doc.y + 1,
-                })
-            }
-        }).1
+        s.lines_inclusive()
+            .map(str::len)
+            .fold((0, DocPos { x: 0, y: 0 }), |(total, doc), l| {
+                if total > off {
+                    unreachable!()
+                };
+                if total == off {
+                    (total, doc)
+                } else if total + l > off {
+                    (
+                        off,
+                        DocPos {
+                            x: off - total,
+                            ..doc
+                        },
+                    )
+                } else if total + l == off && off == s.len() {
+                    (
+                        off,
+                        DocPos {
+                            x: off - total,
+                            ..doc
+                        },
+                    )
+                } else {
+                    (total + l, DocPos { x: 0, y: doc.y + 1 })
+                }
+            })
+            .1
     }
 
     #[test]
     fn helper_str_doc_pos_off() {
-        assert_eq!(str_doc_pos_off("as df", 0), DocPos {x: 0, y: 0});
-        assert_eq!(str_doc_pos_off("as df", 1), DocPos {x: 1, y: 0});
-        assert_eq!(str_doc_pos_off("as df", 2), DocPos {x: 2, y: 0});
-        assert_eq!(str_doc_pos_off("as\ndf", 2), DocPos {x: 2, y: 0});
-        assert_eq!(str_doc_pos_off("as\ndf", 3), DocPos {x: 0, y: 1});
-        assert_eq!(str_doc_pos_off("as\ndf", 4), DocPos {x: 1, y: 1});
-        assert_eq!(str_doc_pos_off("as\ndf", 5), DocPos {x: 2, y: 1});
-        assert_eq!(str_doc_pos_off("as\ndf", 6), DocPos {x: 2, y: 1});
+        assert_eq!(str_doc_pos_off("as df", 0), DocPos { x: 0, y: 0 });
+        assert_eq!(str_doc_pos_off("as df", 1), DocPos { x: 1, y: 0 });
+        assert_eq!(str_doc_pos_off("as df", 2), DocPos { x: 2, y: 0 });
+        assert_eq!(str_doc_pos_off("as\ndf", 2), DocPos { x: 2, y: 0 });
+        assert_eq!(str_doc_pos_off("as\ndf", 3), DocPos { x: 0, y: 1 });
+        assert_eq!(str_doc_pos_off("as\ndf", 4), DocPos { x: 1, y: 1 });
+        assert_eq!(str_doc_pos_off("as\ndf", 5), DocPos { x: 2, y: 1 });
+        assert_eq!(str_doc_pos_off("as\ndf", 6), DocPos { x: 2, y: 1 });
     }
 
     macro_rules! get_lines_test {
@@ -463,16 +548,17 @@ pub mod test {
         };
     }
 
-    get_lines_test!( 
+    get_lines_test!(
         #[ignore = "think about correct behavior"]
-        get_lines_blank, "", 0..1
+        get_lines_blank,
+        "",
+        0..1
     );
     get_lines_test!(get_lines_single, "asdf", 0..1);
     get_lines_test!(get_lines_multiple, "asdf\nabcd\nefgh", 0..3);
     get_lines_test!(get_lines_single_middle, "asdf\nabcd\nefgh", 1..2);
     get_lines_test!(get_lines_multiple_middle, "asdf\nabcd\nefgh\n1234", 1..3);
     get_lines_test!(get_lines_complex, buffer_with_changes, 3..12);
-
 
     macro_rules! insert_test {
         ($name:ident, $init:tt, $($rem:tt),* $(,)?) => {
@@ -501,9 +587,18 @@ pub mod test {
     insert_test!(insert_offset, "0123456789", (=> 5), "000000");
     insert_test!(insert_offset_newl, "0123456789", (=> 5), "\n");
     insert_test!(insert_offset_prenewl, "0123456789", "\n");
-    insert_test!(insert_multiline, "0123456789", "asdf\nzdq\nqwrpi\nmnbv\n", "\n\n\n104a9zlq");
-    insert_test!(insert_multiline_dirty, buffer_with_changes, "asdf\nzdq\nqwrpi\nmnbv\n", "\n\n\n104a9zlq");
-
+    insert_test!(
+        insert_multiline,
+        "0123456789",
+        "asdf\nzdq\nqwrpi\nmnbv\n",
+        "\n\n\n104a9zlq"
+    );
+    insert_test!(
+        insert_multiline_dirty,
+        buffer_with_changes,
+        "asdf\nzdq\nqwrpi\nmnbv\n",
+        "\n\n\n104a9zlq"
+    );
 
     macro_rules! chars_fwd_test {
         ($name: ident, $str:expr, $start:expr) => {
@@ -513,7 +608,11 @@ pub mod test {
                 let mut it_test = buf.chars_fwd(str_doc_pos_off($str, $start));
                 let mut idx = $start;
                 for c in $str[$start..].chars() {
-                    assert_eq!(it_test.next(), Some((str_doc_pos_off($str, idx), c)), "actual == expected");
+                    assert_eq!(
+                        it_test.next(),
+                        Some((str_doc_pos_off($str, idx), c)),
+                        "actual == expected"
+                    );
                     idx += 1;
                 }
                 assert_eq!(it_test.next(), None, "end of iter");
@@ -530,7 +629,6 @@ pub mod test {
     chars_fwd_test!(chars_fwd_start_eol, "01\n34", 2);
     chars_fwd_test!(chars_fwd_start_end, "0123456789", 9);
 
-
     macro_rules! chars_bck_test {
         ($name: ident, $init:tt, $start:expr) => {
             #[test]
@@ -540,7 +638,11 @@ pub mod test {
                 let mut it_test = buf.chars_bck(str_doc_pos_off(&bufstr, $start));
                 let mut idx = $start;
                 for c in bufstr[..($start + 1).min(bufstr.len())].chars().rev() {
-                    assert_eq!(it_test.next(), Some((str_doc_pos_off(&bufstr, idx), c)), "actual == expected");
+                    assert_eq!(
+                        it_test.next(),
+                        Some((str_doc_pos_off(&bufstr, idx), c)),
+                        "actual == expected"
+                    );
                     idx = idx.saturating_sub(1);
                 }
                 assert_eq!(it_test.next(), None, "end of iter");
@@ -574,7 +676,7 @@ pub mod test {
         };
     }
 
-    end_tests!{
+    end_tests! {
         #[ignore = "think about correct behavior"]
         end_blank => "",
         end_simple => "0123456789",
@@ -648,47 +750,94 @@ pub mod test {
         assert_eq!(buf.len(), 0);
     }
 
-
     macro_rules! delete_range_test {
         ($name:ident, $str:literal, $range:expr, $cursor:expr) => {
             #[test]
             fn $name() {
+                let range = normalize_range($str, $range);
                 let mut buf = Buffer::from_str($str);
                 buf.cursor.set_pos(str_doc_pos_off($str, $cursor));
-                let start = str_doc_pos_off($str, $range.start);
-                let end = str_doc_pos_off($str, $range.end);
                 let expected_deleted = &$str[$range];
                 let mut expected_remain = String::from($str);
                 expected_remain.replace_range($range, "");
-                let deleted = buf.delete_range(start..end);
+                let deleted = buf.delete_range(make_docrange($str, $range));
                 assert_eq!(&deleted, expected_deleted);
                 assert_eq!(buf.to_string(), expected_remain);
-                assert_eq!(buf.cursor.pos, str_doc_pos_off($str, $cursor - ($cursor as
-                    usize).saturating_sub($range.start).min($range.len())));
+                assert_eq!(
+                    buf.cursor.pos,
+                    str_doc_pos_off(
+                        $str,
+                        $cursor
+                            - ($cursor as usize)
+                                .saturating_sub(range.start)
+                                .min(range.len())
+                    )
+                );
             }
         };
     }
 
-    delete_range_test!(delete_range_simple,                "simple buffer", 2..8, 0);
-    delete_range_test!(delete_range_simple_cursor_start,   "simple buffer", 2..8, 2);
-    delete_range_test!(delete_range_simple_cursor_in,      "simple buffer", 2..8, 4);
-    delete_range_test!(delete_range_simple_cursor_last,    "simple buffer", 2..8, 7);
-    delete_range_test!(delete_range_simple_cursor_end,     "simple buffer", 2..8, 8);
-    delete_range_test!(delete_range_simple_cursor_after,   "simple buffer", 2..8, 10);
-    delete_range_test!(delete_range_simple_all,            "simple buffer", 0..13, 5);
-    delete_range_test!(delete_range_2line,                 "2 line\nbuffer", 2..8, 0);
-    delete_range_test!(delete_range_2line_to_lf,           "2 line\nbuffer", 2..7, 0);
-    delete_range_test!(delete_range_2line_to_lf_c_end,     "2 line\nbuffer", 2..7, 7);
-    delete_range_test!(delete_range_2line_to_lf_past_end,  "2 line\nbuffer", 2..7, 8);
-    delete_range_test!(delete_range_2line_to_lf_c_at_lf,   "2 line\nbuffer", 2..7, 6);
-    delete_range_test!(delete_range_2line_cursor_start,    "2 line\nbuffer", 2..8, 2);
-    delete_range_test!(delete_range_2line_cursor_in,       "2 line\nbuffer", 2..8, 4);
-    delete_range_test!(delete_range_2line_cursor_last,     "2 line\nbuffer", 2..8, 7);
-    delete_range_test!(delete_range_2line_cursor_end,      "2 line\nbuffer", 2..8, 8);
-    delete_range_test!(delete_range_2line_cursor_after,    "2 line\nbuffer", 2..8, 10);
-    delete_range_test!(delete_range_2line_all,             "2 line\nbuffer", 0..13, 10);
-    delete_range_test!(delete_range_empty,                 "", 0..0, 0);
-
+    delete_range_test!(delete_range_simple, "simple buffer", 2..8, 0);
+    delete_range_test!(delete_range_simple_cursor_start, "simple buffer", 2..8, 2);
+    delete_range_test!(delete_range_simple_cursor_in, "simple buffer", 2..8, 4);
+    delete_range_test!(delete_range_simple_cursor_last, "simple buffer", 2..8, 7);
+    delete_range_test!(delete_range_simple_cursor_end, "simple buffer", 2..8, 8);
+    delete_range_test!(delete_range_simple_cursor_after, "simple buffer", 2..8, 10);
+    delete_range_test!(delete_range_simple_all, "simple buffer", 0..13, 5);
+    delete_range_test!(delete_range_2line, "2 line\nbuffer", 2..8, 0);
+    delete_range_test!(delete_range_2line_to_lf, "2 line\nbuffer", 2..7, 0);
+    delete_range_test!(delete_range_2line_to_lf_c_end, "2 line\nbuffer", 2..7, 7);
+    delete_range_test!(delete_range_2line_to_lf_past_end, "2 line\nbuffer", 2..7, 8);
+    delete_range_test!(delete_range_2line_to_lf_c_at_lf, "2 line\nbuffer", 2..7, 6);
+    delete_range_test!(delete_range_2line_cursor_start, "2 line\nbuffer", 2..8, 2);
+    delete_range_test!(delete_range_2line_cursor_in, "2 line\nbuffer", 2..8, 4);
+    delete_range_test!(delete_range_2line_cursor_last, "2 line\nbuffer", 2..8, 7);
+    delete_range_test!(delete_range_2line_cursor_end, "2 line\nbuffer", 2..8, 8);
+    delete_range_test!(delete_range_2line_cursor_after, "2 line\nbuffer", 2..8, 10);
+    delete_range_test!(delete_range_2line_all, "2 line\nbuffer", 0..13, 10);
+    delete_range_test!(delete_range_simple_inc, "simple buffer", 2..=8, 0);
+    delete_range_test!(
+        delete_range_simple_cursor_start_inc,
+        "simple buffer",
+        2..=8,
+        2
+    );
+    delete_range_test!(delete_range_simple_cursor_in_inc, "simple buffer", 2..=8, 4);
+    delete_range_test!(delete_range_simple_all_inc, "simple buffer", 0..=12, 5);
+    delete_range_test!(delete_range_2line_inc, "2 line\nbuffer", 2..=8, 0);
+    delete_range_test!(delete_range_2line_to_lf_inc, "2 line\nbuffer", 2..=6, 0);
+    delete_range_test!(
+        delete_range_2line_to_lf_c_end_inc,
+        "2 line\nbuffer",
+        2..=6,
+        7
+    );
+    delete_range_test!(
+        delete_range_2line_to_lf_c_last_inc,
+        "2 line\nbuffer",
+        2..=6,
+        6
+    );
+    delete_range_test!(
+        delete_range_2line_cursor_start_inc,
+        "2 line\nbuffer",
+        2..=8,
+        2
+    );
+    delete_range_test!(delete_range_2line_cursor_in_inc, "2 line\nbuffer", 2..=8, 4);
+    delete_range_test!(
+        delete_range_2line_cursor_end_inc,
+        "2 line\nbuffer",
+        2..=8,
+        8
+    );
+    delete_range_test!(
+        delete_range_2line_cursor_after_inc,
+        "2 line\nbuffer",
+        2..=8,
+        10
+    );
+    delete_range_test!(delete_range_empty, "", 0..0, 0);
 
     macro_rules! pos_delta_test {
         ($name:ident, $str:expr, $start:expr, $off:expr) => {
@@ -697,26 +846,34 @@ pub mod test {
                 let buf = Buffer::from_str($str);
                 let start_idx = ($start as usize).min(buf.len().saturating_sub(1));
                 let start = str_doc_pos_off($str, start_idx);
-                let expected = str_doc_pos_off($str, start_idx.saturating_add_signed($off).min(buf.len().saturating_sub(1)));
-                assert_eq!(buf.text.pos_delta(start, $off), expected, "actual == expected")
+                let expected = str_doc_pos_off(
+                    $str,
+                    start_idx
+                        .saturating_add_signed($off)
+                        .min(buf.len().saturating_sub(1)),
+                );
+                assert_eq!(
+                    buf.text.pos_delta(start, $off),
+                    expected,
+                    "actual == expected"
+                )
             }
         };
     }
 
-    pos_delta_test!(offset_pos_one_line_forward,  "simple buffer", 5, 3);
+    pos_delta_test!(offset_pos_one_line_forward, "simple buffer", 5, 3);
     pos_delta_test!(offset_pos_one_line_backward, "simple buffer", 4, -3);
-    pos_delta_test!(offset_pos_multiline_fwd,     "simple\nbuffer", 4, 4);
-    pos_delta_test!(offset_pos_multiline_bck,     "simple\nbuffer", 9, -4);
-    pos_delta_test!(offset_pos_before_start,      "simple buffer", 8, -12);
-    pos_delta_test!(offset_pos_start_past_end,    "simple buffer", 22, -3);
-    pos_delta_test!(offset_pos_start_past_end2,   "simple buffer", 22, -14);
-    pos_delta_test!(offset_pos_go_past_end,       "simple buffer", 5, 14);
-    pos_delta_test!(offset_pos_no_move,           "simple buffer", 5, 0);
-    pos_delta_test!(offset_pos_no_move_on_lf,     "simple\nbuffer", 6, 0);
-    pos_delta_test!(offset_pos_empty,             "", 0, 0);
-    pos_delta_test!(offset_pos_empty_fwd,         "", 0, 2);
-    pos_delta_test!(offset_pos_empty_bck,         "", 0, -2);
-
+    pos_delta_test!(offset_pos_multiline_fwd, "simple\nbuffer", 4, 4);
+    pos_delta_test!(offset_pos_multiline_bck, "simple\nbuffer", 9, -4);
+    pos_delta_test!(offset_pos_before_start, "simple buffer", 8, -12);
+    pos_delta_test!(offset_pos_start_past_end, "simple buffer", 22, -3);
+    pos_delta_test!(offset_pos_start_past_end2, "simple buffer", 22, -14);
+    pos_delta_test!(offset_pos_go_past_end, "simple buffer", 5, 14);
+    pos_delta_test!(offset_pos_no_move, "simple buffer", 5, 0);
+    pos_delta_test!(offset_pos_no_move_on_lf, "simple\nbuffer", 6, 0);
+    pos_delta_test!(offset_pos_empty, "", 0, 0);
+    pos_delta_test!(offset_pos_empty_fwd, "", 0, 2);
+    pos_delta_test!(offset_pos_empty_bck, "", 0, -2);
 
     mod lines_inclusive {
         use super::*;

@@ -2,6 +2,7 @@ use crate::command::cmdline::CommandLine;
 use crate::command::cmdline::CommandLineInput;
 use crate::debug::log;
 use crate::input::Action;
+use crate::input::Operation;
 use crate::textobj::Motion;
 
 use crate::term;
@@ -15,6 +16,7 @@ use nix::sys::termios::{LocalFlags, Termios};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::ops::Range;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 
@@ -201,35 +203,70 @@ impl Ctx {
     }
 
     pub fn buffers(&self) -> impl Iterator<Item = (usize, &str)> {
-        self.buffers.iter().filter(|(k, _)| matches!(k, BufId::Normal(_))).map(|(k, v)| {
-            (k.id(), v.name())
-        })
+        self.buffers
+            .iter()
+            .filter(|(k, _)| matches!(k, BufId::Normal(_)))
+            .map(|(k, v)| (k.id(), v.name()))
     }
 
-    fn apply_motion(&mut self, motion: Motion) {
+    fn apply_motion(&mut self, motion: Motion) -> DocRange {
+        let buf = self.buffers.get_mut(&self.focused).unwrap();
+        let start = buf.cursor.pos;
         match motion {
             Motion::ScreenSpace { dy, dx } => {
-                let buf = self.buffers.get_mut(&self.focused).unwrap();
-                self.window.move_cursor(buf, dx, dy)
+                self.window.move_cursor(buf, dx, dy);
             }
             Motion::BufferSpace { doff: _ } => todo!(),
             Motion::TextObj(_) => panic!("text objects cannot be move targets"),
             Motion::TextMotion(m) => {
-                let buf = &mut self.buffers.get_mut(&self.focused).unwrap();
                 if let Some(newpos) = m(buf, buf.cursor.pos) {
                     self.window.set_pos(buf, newpos);
                 }
             }
         }
+        let end = buf.cursor.pos;
+        let (start, end) = {
+            let mut start = start;
+            let mut end = end;
+            if start > end {
+                std::mem::swap(&mut start, &mut end)
+            }
+            (start, end)
+        };
+
+        // TODO: this is not always correct
+        DocRange {
+            start_inclusive: true,
+            start,
+            end,
+            end_inclusive: true,
+        }
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        if mode == Mode::Command {
+            self.command_line
+                .set_type(crate::command::cmdline::CommandType::Ex)
+        }
+        self.mode = mode;
     }
 
     pub fn process_action(&mut self, action: Action) {
-        if let Some(m) = action.motion {
-            self.apply_motion(m)
-        }
+        let motion_range = if let Some(m) = action.motion {
+            Some(match m {
+                Motion::TextObj(r) => {
+                    let buf = self.buffers.get(&self.focused).unwrap();
+                    let pos = buf.cursor.pos;
+                    r(buf, pos)
+                }
+                _ => Some(self.apply_motion(m)),
+            })
+        } else {
+            None
+        };
         match self.mode {
             Mode::Command => match action.operation {
-                crate::input::Operation::Insert(s) => {
+                Operation::Insert(s) => {
                     let c = s.chars().next().unwrap();
                     if c == '\r' {
                         self.command_line
@@ -241,61 +278,69 @@ impl Ctx {
                         let _ = self.command_line.input(CommandLineInput::Append(c));
                     }
                 }
-                crate::input::Operation::DeleteBefore => {
+                Operation::DeleteBefore => {
                     let _ = self.command_line.input(CommandLineInput::Delete);
                 }
-                crate::input::Operation::DeleteAfter => {
+                Operation::DeleteAfter => {
                     panic!("only backspace is implemented for command line")
                     // self.command_line.input(CommandLineInput::Delete)
                 }
-                crate::input::Operation::SwitchMode(m) => {
+                Operation::SwitchMode(m) => {
                     if m != Mode::Command {
                         self.command_line.clear_command();
                     }
                     self.mode = m
                 }
-                crate::input::Operation::Debug => todo!(),
-                crate::input::Operation::None => (),
+                Operation::Debug => todo!(),
+                Operation::None => (),
                 _ => unreachable!(),
             },
             _ => match action.operation {
-                crate::input::Operation::Change => todo!(),
-                crate::input::Operation::Insert(c) => {
+                Operation::Change => {
+                    let range = motion_range.expect("change requires motion");
+                    if let Some(range) = range {
+                        let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                        buf.delete_range(range);
+                        self.set_mode(Mode::Insert);
+                    }
+                }
+                Operation::Delete => {
+                    let range = motion_range.expect("delete requires motion");
+                    if let Some(range) = range {
+                        let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                        buf.delete_range(range);
+                    }
+                }
+                Operation::Insert(c) => {
                     let buf = self.buffers.get_mut(&self.focused()).unwrap();
                     buf.insert_str(c.replace('\r', "\n").as_str());
                     self.window.fit_ctx_frame(&mut buf.cursor);
                 }
-                crate::input::Operation::DeleteBefore => {
+                Operation::DeleteBefore => {
                     let buf = self.buffers.get_mut(&self.focused()).unwrap();
                     buf.delete_char_before();
                 }
-                crate::input::Operation::DeleteAfter => {
+                Operation::DeleteAfter => {
                     let buf = self.buffers.get_mut(&self.focused()).unwrap();
                     buf.delete_char();
                     if buf.cursor.pos.x != 0 {
                         self.window.move_cursor(buf, 1, 0);
                     }
                 }
-                crate::input::Operation::SwitchMode(m) => {
-                    if m == Mode::Command {
-                        self.command_line
-                            .set_type(crate::command::cmdline::CommandType::Ex)
-                    }
-                    self.mode = m
-                }
-                crate::input::Operation::None => (),
-                crate::input::Operation::Replace(_) => todo!(),
-                crate::input::Operation::Debug => {
+                Operation::SwitchMode(m) => self.set_mode(m),
+                Operation::None => (),
+                Operation::Replace(_) => todo!(),
+                Operation::Debug => {
                     unimplemented!()
                 }
-                crate::input::Operation::RecenterView => {
-                    self.window.center_view(&mut self.buffers.get_mut(&self.focused()).unwrap().cursor)
-                },
+                Operation::RecenterView => self
+                    .window
+                    .center_view(&mut self.buffers.get_mut(&self.focused()).unwrap().cursor),
             },
         };
         if let Some(m) = action.post_motion {
-            self.apply_motion(m)
-        }
+            self.apply_motion(m);
+        };
     }
 }
 
