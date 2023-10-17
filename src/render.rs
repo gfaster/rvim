@@ -209,7 +209,7 @@ impl Ctx {
             .map(|(k, v)| (k.id(), v.name()))
     }
 
-    fn apply_motion(&mut self, motion: Motion) -> DocRange {
+    fn apply_motion(&mut self, motion: Motion) -> Option<Range<usize>> {
         let buf = self.buffers.get_mut(&self.focused).unwrap();
         let start = buf.cursor.pos;
         match motion {
@@ -219,9 +219,8 @@ impl Ctx {
             Motion::BufferSpace { doff: _ } => todo!(),
             Motion::TextObj(_) => panic!("text objects cannot be move targets"),
             Motion::TextMotion(m) => {
-                if let Some(newpos) = m(buf, buf.cursor.pos) {
-                    self.window.set_pos(buf, newpos);
-                }
+                let newoff = m(&buf, buf.coff())?;
+                self.window.set_pos(buf, buf.offset_to_pos(newoff));
             }
         }
         let end = buf.cursor.pos;
@@ -233,14 +232,7 @@ impl Ctx {
             }
             (start, end)
         };
-
-        // TODO: this is not always correct
-        DocRange {
-            start_inclusive: true,
-            start,
-            end,
-            end_inclusive: true,
-        }
+        Some(buf.pos_to_offset(start)..buf.pos_to_offset(end))
     }
 
     fn set_mode(&mut self, mode: Mode) {
@@ -256,10 +248,10 @@ impl Ctx {
             Some(match m {
                 Motion::TextObj(r) => {
                     let buf = self.buffers.get(&self.focused).unwrap();
-                    let pos = buf.cursor.pos;
+                    let pos = buf.coff();
                     r(buf, pos)
                 }
-                _ => Some(self.apply_motion(m)),
+                _ => self.apply_motion(m),
             })
         } else {
             None

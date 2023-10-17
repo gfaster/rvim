@@ -15,8 +15,6 @@ use std::str::Chars;
 
 use crate::buffer::DocPos;
 
-use super::DocRange;
-
 /// normal operations are done as a standard character-wise rope.
 ///
 /// Remember: an LF is the end of the line, not the number of lines.
@@ -322,12 +320,6 @@ impl Rope {
         Self::merge(l, r)
     }
 
-    fn delete_range(self, range: DocRange) -> Self {
-        let start = self.doc_pos_to_offset(range.start).unwrap();
-        let end = self.doc_pos_to_offset(range.end).unwrap();
-        self.delete_range_offset(start..end)
-    }
-
     fn forward_iter(&self, pos: DocPos) -> RopeForwardIter {
         let off = self.doc_pos_to_offset(pos).expect("valid position");
         let mut ret = RopeForwardIter {
@@ -609,11 +601,6 @@ impl RopeBuffer {
     //     self.invalidate_cache();
     //     todo!();
     // }
-
-    pub fn delete_range(&mut self, r: DocRange) {
-        self.invalidate_cache();
-        self.data = std::mem::take(&mut self.data).delete_range(r);
-    }
 
     // pub fn replace_range(&mut self, _ctx: &mut BufCursor, _r: DocRange, _s: &str) {
     //     self.invalidate_cache();

@@ -365,15 +365,14 @@ impl Window {
         let line = &buf.get_lines(newy..(newy + 1))[0];
         let newx = buf
             .cursor
-            .virtpos
-            .x
+            .virtcol
             .saturating_add_signed(dx)
             .clamp(0, line.len());
 
         if dx != 0 {
-            buf.cursor.virtpos.x = newx;
+            buf.cursor.virtcol = newx;
         }
-        buf.cursor.virtpos.y = newy;
+        buf.cursor.virtcol = newy;
 
         buf.cursor.pos.x = newx;
         buf.cursor.pos.y = newy;
@@ -383,10 +382,9 @@ impl Window {
     pub fn set_pos(&mut self, buf: &mut Buffer, pos: DocPos) {
         let newy = pos.y.clamp(0, buf.linecnt().saturating_sub(1));
         buf.cursor.pos.y = newy;
-        buf.cursor.virtpos.y = newy;
-        let line = &buf.get_lines(newy..(newy + 1))[0];
+        let line = &buf.line(newy);
         buf.cursor.pos.x = pos.x.clamp(0, line.len());
-        buf.cursor.virtpos.x = buf.cursor.pos.x;
+        buf.cursor.virtcol = buf.cursor.pos.x;
         self.fit_ctx_frame(&mut buf.cursor);
     }
 
