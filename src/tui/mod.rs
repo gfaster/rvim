@@ -38,6 +38,7 @@ impl PartialOrd for TermPos {
     }
 }
 
+/// half-open range on the terminal
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TermBox {
     pub start: TermPos,
@@ -50,26 +51,26 @@ impl std::ops::RangeBounds<TermPos> for TermBox {
     }
 
     fn end_bound(&self) -> std::ops::Bound<&TermPos> {
-        std::ops::Bound::Included(&self.end)
+        std::ops::Bound::Excluded(&self.end)
     }
 }
 
 impl TermBox {
-    pub const fn xrng(&self) -> RangeInclusive<u32> {
-        self.start.x..=self.end.x
+    pub const fn xrng(&self) -> Range<u32> {
+        self.start.x..self.end.x
     }
-    pub const fn yrng(&self) -> RangeInclusive<u32> {
-        self.start.y..=self.end.y
+    pub const fn yrng(&self) -> Range<u32> {
+        self.start.y..self.end.y
     }
 
     pub const fn xlen(&self) -> u32 {
         self.assert_valid();
-        self.end.x - self.start.x + 1
+        self.end.x - self.start.x
     }
 
     pub const fn ylen(&self) -> u32 {
         self.assert_valid();
-        self.end.y - self.start.y + 1
+        self.end.y - self.start.y
     }
 
     fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32>) -> Self {
@@ -77,7 +78,7 @@ impl TermBox {
         let yrng = TermGrid::rangebounds_to_range(yrng);
         Self {
             start: tp!(xrng.start, yrng.start),
-            end: tp!(xrng.end - 1, yrng.end - 1),
+            end: tp!(xrng.end, yrng.end),
         }
     }
 
@@ -383,7 +384,7 @@ impl TermGrid {
         assert!(y < self.h);
         TermBox {
             start: tp!(0, y),
-            end: tp!(self.w - 1, y),
+            end: tp!(self.w, y),
         }
     }
 
@@ -519,17 +520,17 @@ impl Write for TermGridBox<'_> {
         let mut x = self.range.start.x + self.cursor.x;
         let mut y = self.range.start.y + self.cursor.y;
         for c in s.chars() {
-            if x > self.range.end.x {
+            if x >= self.range.end.x {
                 x = self.range.start.x;
                 self.cursor.x = 0;
                 y += 1;
                 self.cursor.y += 1;
             }
-            if y > self.range.end.y {
+            if y >= self.range.end.y {
                 return Err(std::fmt::Error);
             }
             if c == '\n' {
-                let rng = self.grid.line_rng(y, x..=self.range.end.x);
+                let rng = self.grid.line_rng(y, x..self.range.end.x);
                 self.grid.cells[rng].fill(TermCell::new());
                 x = self.range.start.x;
                 self.cursor.x = 0;

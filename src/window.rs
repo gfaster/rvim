@@ -21,6 +21,16 @@ struct Padding {
     right: u32,
 }
 
+impl Padding {
+    const fn w(&self) -> u32 {
+        self.left + self.right
+    }
+
+    const fn h(&self) -> u32 {
+        self.top + self.bottom
+    }
+}
+
 #[enum_dispatch]
 trait DispComponent {
     /// write the component
@@ -239,8 +249,8 @@ impl Window {
                     y: topleft.y + padding.top,
                 },
                 end: TermPos {
-                    x: topleft.x + width - padding.right - 1,
-                    y: topleft.y + height - padding.bottom - 1,
+                    x: topleft.x + width - padding.right,
+                    y: topleft.y + height - padding.bottom,
                 },
             },
             components,
@@ -276,8 +286,8 @@ impl Window {
     pub fn set_size_padded(&mut self, newx: u32, newy: u32) {
         let w = newx - self.padding.left - self.padding.right;
         let h = newy - self.padding.top - self.padding.bottom;
-        self.bounds.end.x = self.bounds.start.x + w - 1;
-        self.bounds.end.y = self.bounds.start.y + h - 1;
+        self.bounds.end.x = self.bounds.start.x + w;
+        self.bounds.end.y = self.bounds.start.y + h;
         self.bounds.assert_valid();
     }
 
@@ -287,25 +297,28 @@ impl Window {
         let real = self.real_bounds();
         let w = real.xlen().min(tw);
         let h = real.ylen().min(th);
-        // std::thread::sleep(std::time::Duration::from_secs(10));
         self.set_size_padded(w, h);
         if real.end.x >= tw {
-            let diff = (real.end.x - tw) + 1;
-            self.bounds.end.x -= diff;
-            self.bounds.start.x -= diff;
+            assert!(self.padding.w() < tw, "resize too small");
+            self.bounds.end.x = tw - self.padding.right;
+            self.bounds.start.x = 
+                tw.saturating_sub(w) + self.padding.left;
         }
         if real.end.y >= th {
-            let diff = (real.end.y - th) + 1;
-            self.bounds.end.y -= diff;
-            self.bounds.start.y -= diff;
+            assert!(self.padding.h() < th, "resize too small");
+            self.bounds.end.y = th - self.padding.bottom;
+            self.bounds.start.y = 
+                th.saturating_sub(h) + self.padding.top;
         }
     }
 
     /// snap the window to the bottom of the screen
     pub fn snap_to_bottom(&mut self, tui: &TermGrid) {
         let (_, h) = tui.dim();
-        self.bounds.start.y += h;
-        self.bounds.end.y += h;
+        let ch = self.real_bounds().ylen();
+        self.bounds.start.y = h - ch + self.padding.top;
+        self.bounds.end.y = h - self.padding.bottom;
+        debug_assert_eq!(ch, self.real_bounds().ylen());
         self.clamp_to_screen(tui);
     }
 
@@ -318,8 +331,6 @@ impl Window {
     }
 
     fn reltoabs(&self, pos: TermPos) -> TermPos {
-        // log!("{:?} + {pos:?}", self.bounds);
-        // sleep(10);
         TermPos {
             x: pos.x + self.bounds.start.x,
             y: pos.y + self.bounds.start.y,
@@ -342,7 +353,6 @@ impl Window {
                 .take(self.height() as usize)
                 .enumerate()
             {
-                // log!("{line:?}");
                 tui.write_line(
                     y as u32 + self.bounds.start.y,
                     self.bounds.xrng(),
@@ -362,17 +372,16 @@ impl Window {
             .y
             .saturating_add_signed(dy)
             .clamp(0, buf.linecnt().saturating_sub(1));
-        let line = &buf.get_lines(newy..(newy + 1))[0];
+        let line = &buf.line(newy);
         let newx = buf
             .cursor
             .virtcol
             .saturating_add_signed(dx)
-            .clamp(0, line.len());
+            .clamp(0, line.len().saturating_sub(1));
 
         if dx != 0 {
             buf.cursor.virtcol = newx;
         }
-        buf.cursor.virtcol = newy;
 
         buf.cursor.pos.x = newx;
         buf.cursor.pos.y = newy;

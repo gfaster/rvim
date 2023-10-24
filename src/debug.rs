@@ -30,11 +30,15 @@ fn init_log() -> MutexGuard<'static, Option<LogComponents>> {
         return guard;
     }
 
-    let file = fs::OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .create(true)
         .write(true)
         .open(LOG_FILE)
-        .expect("fifo created");
+        .expect("logfile created");
+
+    file.set_len(0).unwrap();
+    file.write(&format!("New log: \n").as_bytes()).unwrap();
+    file.flush().unwrap();
 
     // if the file load fails, then we have no way of knowing - alacritty will display a popup
     // error instead of returning a failure exit code

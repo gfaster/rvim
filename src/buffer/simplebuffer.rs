@@ -197,6 +197,7 @@ impl SimpleBuffer {
     }
 
     pub fn chars_bck(&self, pos: usize) -> impl Iterator<Item = char> + '_ {
+        // we do this so as to not crash on empty buffer
         self.data[..(pos + 1).min(self.data.len())].chars().rev()
     }
 }
