@@ -1,4 +1,5 @@
-use crate::prelude::*;
+use crate::log;
+use crate::{guile, prelude::*};
 use crate::render::Ctx;
 use std::fmt::Write;
 use std::{error::Error, fmt::Display, fs::OpenOptions, io::Read, path::PathBuf};
@@ -8,6 +9,7 @@ mod parser;
 pub enum Command {
     Write { path: Option<PathBuf> },
     Edit { path: PathBuf },
+    Guile { cmd: String },
     ListBuffers,
     Substitute,
     Global,
@@ -27,6 +29,11 @@ impl Error for WriteCommandError {}
 impl Command {
     pub fn exec(self, ctx: &mut Ctx) -> Result<(), Box<dyn Error>> {
         match self {
+            Command::Guile { cmd } => {
+                // log!("execing {cmd}");
+                guile::execute_guile_interpreted(&cmd).map_err(|_| "")?;
+                Ok(())
+            },
             Command::Write { path } => {
                 let path = path
                     .or_else(|| ctx.focused_buf().path().map(|p| p.to_path_buf()))

@@ -9,6 +9,7 @@ mod term;
 mod textobj;
 mod tui;
 mod window;
+mod guile;
 use prelude::*;
 
 use libc::STDIN_FILENO;
@@ -18,6 +19,7 @@ use nix::sys::{
     signalfd::SigSet,
 };
 use render::Ctx;
+use std::sync::Mutex;
 use std::{
     panic::{self, PanicInfo},
     path::Path,
@@ -39,7 +41,7 @@ static DEFAULT_PANIC: std::sync::Mutex<
 > = std::sync::Mutex::new(None);
 
 // holds the original termios state to restore to when exiting
-static mut ORIGINAL_TERMIOS: Option<Termios> = None;
+static ORIGINAL_TERMIOS: Mutex<Option<Termios>> = Mutex::new(None);
 
 fn exit() {
     EXIT_PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -66,17 +68,19 @@ fn main_loop() {
 
 fn main() -> Result<(), ()> {
     // panic handler is needed because we need to restore the terminal
-    unsafe {
-        ORIGINAL_TERMIOS = Some(termios::tcgetattr(STDIN_FILENO).unwrap());
-    }
+    let mut guard = ORIGINAL_TERMIOS.lock().unwrap();
+    *guard = Some(termios::tcgetattr(STDIN_FILENO).unwrap());
     *DEFAULT_PANIC.try_lock().expect("first thread to take lock") = Some(panic::take_hook());
     panic::set_hook(Box::new(panic_handler));
+    drop(guard);
 
     // let buf = buffer::Buffer::new("./assets/test/passage_wrapped.txt").unwrap();
     // let buf = buffer::Buffer::new("./assets/test/crossbox.txt").unwrap();
     // let buf = buffer::Buffer::new_fromstring(String::new());
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
+
+    guile::initialize();
 
     main_loop();
 
@@ -85,8 +89,8 @@ fn main() -> Result<(), ()> {
     println!();
 
     // eprintln!("reached end of main loop");
-    if let Some(termios) = unsafe { &ORIGINAL_TERMIOS } {
-        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, termios).unwrap_or(());
+    if let Some(termios) =  ORIGINAL_TERMIOS.lock().unwrap().take()  {
+        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termios).unwrap_or(());
     } else {
         panic!("unable to reset terminal");
     }
@@ -99,10 +103,12 @@ fn main() -> Result<(), ()> {
 fn panic_handler(pi: &PanicInfo) {
     eprint!("\n\n");
 
-    if let Some(termio) = unsafe { ORIGINAL_TERMIOS.clone() } {
-        term::altbuf_disable();
-        term::flush();
-        termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termio).unwrap_or(());
+    if let Some(mut lock) = ORIGINAL_TERMIOS.lock().ok() {
+        if let Some(termio) = lock.take()  {
+            term::altbuf_disable();
+            term::flush();
+            termios::tcsetattr(STDIN_FILENO, termios::SetArg::TCSANOW, &termio).unwrap_or(());
+        }
     }
 
     eprintln!("DON'T PANIC, it said in large, friendly letters.\n");

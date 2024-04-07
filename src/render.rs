@@ -104,9 +104,7 @@ impl Ctx {
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
         let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
-        let components = vec![crate::window::Component::RelLineNumbers(
-            crate::window::RelLineNumbers,
-        )];
+        let components = vec![crate::window::Component::RelLineNumbers];
         let window = Window::new_withdim(
             term::TermPos { x: 0, y: 0 },
             tui.dim().0,
@@ -147,7 +145,7 @@ impl Ctx {
                 self.window.set_size_padded(tui.dim().0, tui.dim().1);
             }
         }
-
+        self.command_line.take_general_input();
         let _ = self.command_line.render(self);
         self.window.draw_buf(self, self.focused_buf());
 

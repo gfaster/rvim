@@ -76,7 +76,7 @@ impl<'a> Lexer<'a> {
         }
         diag.output_severity = TextSeverity::Error;
         write!(diag, "Expected {} but found EOL", TokenKindList(kinds)).unwrap();
-        return None;
+        None
     }
 }
 
@@ -142,6 +142,7 @@ pub fn parse_command(s: &str, diag: &mut CommandLine) -> Option<Command> {
                 .ok()
                 .map(|p| p.data.into()),
         },
+        "scm" => Command::Guile { cmd: args.remainder().into() },
         "q" | "quit" => Command::Quit,
         "e" | "edit" => Command::Edit {
             path: args.next_expects(diag, &[TokenKind::Path])?.data.into(),

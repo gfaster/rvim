@@ -1,0 +1,19 @@
+[package]
+name = "guile-sys"
+version = "0.1.1"
+authors = ["David Li <li.davidm96@gmail.com>",
+           "Dom Rodriguez <dev@dzr.org.uk>"]
+description = "Low-level bindings to GNU Guile."
+repository = "https://github.com/shymega/guile-rs"
+license = "GPL-3.0"
+links = "guile"
+build = "build.rs"
+edition = "2021"
+
+[lib]
+name = "guile_sys"
+path = "src/lib.rs"
+
+[build-dependencies]
+bindgen = "0.69.4"
+cc = "1.0"

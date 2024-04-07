@@ -69,7 +69,8 @@ pub fn log_args(args: fmt::Arguments) {
     if cfg!(test) {
         eprintln!("{}", args);
         return;
-    } else if !cfg!(debug_assertions) {
+    } 
+    if !cfg!(debug_assertions) {
         // change to log file for release builds
         eprintln!("{}", args);
         return;

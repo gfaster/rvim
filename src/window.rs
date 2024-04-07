@@ -9,7 +9,6 @@ use crate::render::Ctx;
 use crate::term;
 use crate::term::TermPos;
 
-use enum_dispatch::enum_dispatch;
 use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
 
@@ -31,7 +30,6 @@ impl Padding {
     }
 }
 
-#[enum_dispatch]
 trait DispComponent {
     /// write the component
     fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx);
@@ -40,12 +38,31 @@ trait DispComponent {
     fn padding(&self) -> Padding;
 }
 
-#[enum_dispatch(DispComponent)]
 pub enum Component {
     RelLineNumbers,
     StatusLine,
     Welcome,
     CommandPrefix,
+}
+
+impl DispComponent for Component {
+    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
+        match self {
+            Component::RelLineNumbers => RelLineNumbers.draw(win, buffer, ctx),
+            Component::StatusLine => StatusLine.draw(win, buffer, ctx),
+            Component::Welcome => Welcome.draw(win, buffer, ctx),
+            Component::CommandPrefix => CommandPrefix.draw(win, buffer, ctx),
+        }
+    }
+
+    fn padding(&self) -> Padding {
+        match self {
+            Component::RelLineNumbers => RelLineNumbers.padding(),
+            Component::StatusLine => StatusLine.padding(),
+            Component::Welcome => Welcome.padding(),
+            Component::CommandPrefix => CommandPrefix.padding(),
+        }
+    }
 }
 
 pub struct RelLineNumbers;
@@ -209,7 +226,7 @@ pub struct Window {
 
 impl Window {
     pub fn new(tui: &TermGrid) -> Self {
-        let components = vec![Component::RelLineNumbers(RelLineNumbers)];
+        let components = vec![Component::RelLineNumbers];
         let (w, h) = tui.dim();
         Self::new_withdim(TermPos { x: 0, y: 0 }, w, h, components)
     }
@@ -222,7 +239,7 @@ impl Window {
     ) -> Self {
         let dirty = true;
         if !dirty {
-            components.push(Component::Welcome(Welcome));
+            components.push(Component::Welcome);
         }
 
         let padding = components.iter().fold(

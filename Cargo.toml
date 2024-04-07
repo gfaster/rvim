@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-enum_dispatch = "0.3.11"
 lazy-regex = "3.0.2"
 libc = "0.2.149"
 nix = "0.26.2"
@@ -17,3 +16,6 @@ textwrap = "0.16.0"
 unic-segment = "0.9.0"
 unicode-truncate = "0.2.0"
 unicode-width = "0.1.10"
+
+[dependencies.guile-sys]
+path = "guile-sys"

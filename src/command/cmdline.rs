@@ -1,7 +1,8 @@
 use crate::buffer::Buffer;
 use crate::debug::log;
-use crate::prelude::*;
+use crate::{guile, prelude::*};
 use std::fmt::Write;
+use std::sync::{mpsc, OnceLock};
 
 use crate::render::BufId;
 use crate::term::TermPos;
@@ -10,6 +11,8 @@ use crate::window::Component;
 use crate::{term, window::Window};
 
 use super::{parser, Command};
+
+pub static CMD_TX: OnceLock<mpsc::Sender<CmdMsg>> = OnceLock::new();
 
 pub enum CommandLineInput {
     Append(char),
@@ -29,6 +32,11 @@ pub enum CommandType {
     None,
 }
 
+pub enum CmdMsg {
+    Str(String),
+    Gmsg(guile::Gmsg)
+}
+
 pub struct CommandLine {
     mode: CommandLineMode,
     input_buf: Buffer,
@@ -36,10 +44,23 @@ pub struct CommandLine {
     other_ctx: Cursor,
     window: Window,
     output_buf: Buffer,
+    msg_rx: mpsc::Receiver<CmdMsg>,
     pub output_severity: crate::tui::TextSeverity,
 }
 
 impl CommandLine {
+    pub fn take_general_input(&mut self) {
+        if let Ok(msg) = self.msg_rx.try_recv() {
+            self.set_mode(CommandLineMode::Output);
+            let s: &str = match &msg {
+                CmdMsg::Str(s) => s,
+                CmdMsg::Gmsg(s) => s,
+            };
+            self.output_severity = crate::tui::TextSeverity::Normal;
+            self.output_buf.insert_str(s);
+        }
+    }
+
     pub fn render(&self, ctx: &Ctx) -> std::fmt::Result {
         match self.mode {
             CommandLineMode::Input => {
@@ -129,12 +150,15 @@ impl CommandLine {
         self.input_buf.clear();
     }
 
+    /// initialize command line - can only be done once in program execution
     pub fn new(tui: &TermGrid) -> Self {
         let (w, h) = tui.dim();
         let components = vec![
-            Component::StatusLine(crate::window::StatusLine),
-            Component::CommandPrefix(crate::window::CommandPrefix),
+            Component::StatusLine,
+            Component::CommandPrefix,
         ];
+        let (tx, rx) = mpsc::channel();
+        CMD_TX.set(tx).expect("Command line was initialized multiple times");
         Self {
             mode: CommandLineMode::Output,
             input_buf: Buffer::new(),
@@ -143,12 +167,20 @@ impl CommandLine {
             output_buf: Buffer::new(),
             window: Window::new_withdim(TermPos { x: 0, y: h - 2 }, w, 2, components),
             output_severity: Default::default(),
+            msg_rx: rx,
         }
     }
 
     /// resize to fit window
     pub fn resize(&mut self, tui: &TermGrid) {
         self.window.snap_to_bottom(tui);
+    }
+
+    /// sends a message to the command line output, and will be displayed on next render call. This
+    /// function will never panic, since it's meant to be used for guile code.
+    pub fn send_msg(s: CmdMsg) -> Result<(), ()> {
+        let tx = CMD_TX.get().ok_or(())?;
+        tx.send(s).map_err(|_| ())
     }
 }
 
