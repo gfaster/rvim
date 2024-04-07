@@ -6,15 +6,18 @@ use crate::input::Operation;
 use crate::textobj::Motion;
 
 use crate::term;
+use crate::tui::TermBox;
 use crate::tui::TermGrid;
 use crate::tui::TextSeverity;
 use crate::window::*;
+use crate::Color;
 use crate::{buffer::*, Mode};
 
 use nix::sys::termios;
 use nix::sys::termios::{LocalFlags, Termios};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::fmt::Write;
 use std::ops::Range;
 use std::os::unix::io::RawFd;
@@ -141,11 +144,11 @@ impl Ctx {
         {
             let tui = self.tui.get_mut();
             if tui.resize_auto() {
-                self.command_line.resize(tui);
-                self.window.set_size_padded(tui.dim().0, tui.dim().1);
+                self.command_line.reset_visual(tui);
+                self.window.set_size_outer(tui.dim().0, tui.dim().1);
             }
         }
-        self.command_line.take_general_input();
+        self.command_line.take_general_input(&self.tui.get_mut());
         let _ = self.command_line.render(self);
         self.window.draw_buf(self, self.focused_buf());
 
@@ -278,6 +281,7 @@ impl Ctx {
                 Operation::SwitchMode(m) => {
                     if m != Mode::Command {
                         self.command_line.clear_command();
+                        self.command_line.reset_visual(self.tui.get_mut());
                     }
                     self.mode = m
                 }
@@ -305,6 +309,9 @@ impl Ctx {
                     let buf = self.buffers.get_mut(&self.focused()).unwrap();
                     buf.insert_str(c.replace('\r', "\n").as_str());
                     self.window.fit_ctx_frame(&mut buf.cursor);
+                    if let Some(pos) = c.bytes().rev().position(|b| b == b'\r') {
+                        buf.cursor.virtcol = pos
+                    }
                 }
                 Operation::DeleteBefore => {
                     let buf = self.buffers.get_mut(&self.focused()).unwrap();
@@ -339,4 +346,23 @@ impl Drop for Ctx {
         termios::tcsetattr(self.term_fd, termios::SetArg::TCSANOW, &self.orig_termios)
             .unwrap_or(());
     }
+}
+
+/// draw text in a region
+pub fn draw_text(ctx: &Ctx, region: TermBox, content: impl Display, color: Color) {
+    let mut tui = ctx.tui.borrow_mut();
+    let s = content.to_string();
+
+    for (y, line) in s.lines()
+        .chain(std::iter::repeat(""))
+        .take(region.ylen() as usize)
+        .enumerate()
+        {
+            tui.write_line(
+                y as u32 + region.start.y,
+                region.xrng(),
+                color,
+                line,
+            );
+        }
 }

@@ -73,7 +73,7 @@ impl TermBox {
         self.end.y - self.start.y
     }
 
-    fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32>) -> Self {
+    pub fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32>) -> Self {
         let xrng = TermGrid::rangebounds_to_range(xrng);
         let yrng = TermGrid::rangebounds_to_range(yrng);
         Self {

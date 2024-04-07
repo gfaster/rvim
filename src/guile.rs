@@ -17,6 +17,7 @@ mod sealed {
 fn rvim_init() {
     unsafe {
         scm_c_define_gsubr(c"pmsg".as_ptr(), 1, 0, 0, rscm_print_msg as *const unsafe extern "C" fn(SCM) -> SCM as *mut _);
+        scm_c_define_gsubr(c"send-str".as_ptr(), 1, 0, 0, rscm_msg_chr as *const unsafe extern "C" fn(SCM) -> SCM as *mut _);
     }
 }
 
@@ -81,6 +82,12 @@ unsafe fn with_guile(f: impl FnOnce() -> *mut u8) -> *mut u8 {
         func().cast()
     }
     scm_with_guile(Some(thunk), (&mut wrapper as *mut _) as *mut c_void) as *mut u8
+}
+
+/// for calling back into Rust from guile
+fn rentry<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> T {
+    let res = std::panic::catch_unwind(f).unwrap_or_else(|_| abort());
+    res
 }
 
 pub fn execute_guile_interpreted(s: &str) -> Result<(), ()> {
@@ -179,12 +186,30 @@ pub unsafe extern "C" fn rscm_print_msg(thunk: SCM) -> SCM {
     result_bool(cmdline::CommandLine::send_msg(msg))
 }
 
+pub unsafe extern "C" fn rscm_msg_chr(ch: SCM) -> SCM {
+    use crate::command::cmdline;
+    let mut len = 0;
+    let msg = scm_to_utf8_stringn(ch, &mut len);
+    let msg = Gmsg {
+        len,
+        msg,
+    };
+    let msg = cmdline::CmdMsg::Gmsg(msg);
+    result_bool(cmdline::CommandLine::send_msg(msg))
+}
+
+
+
+
 pub fn initialize() {
-    unsafe {
+    let ret = unsafe {
         with_guile(|| {
             rvim_init();
             scm_c_primitive_load(c"base.scm".as_ptr());
-            std::ptr::null_mut()
-        });
+            std::ptr::NonNull::dangling().as_ptr()
+        })
+    };
+    if ret.is_null() {
+        log!("failed to initialize scheme")
     }
 }

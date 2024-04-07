@@ -243,9 +243,10 @@ impl Buffer {
     /// pop a character from the end
     pub fn pop(&mut self) -> Option<char> {
         let last = self.last()?;
-        let cursor = &mut self.cursor;
-        cursor.set_pos(last);
-        self.delete_char()
+        self.cursor.set_pos(last);
+        let ret = self.delete_char()?;
+        self.cursor.set_pos(last);
+        Some(ret)
     }
 
     pub fn delete_range(&mut self, range: impl RangeBounds<usize>) -> String {

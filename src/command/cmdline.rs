@@ -6,7 +6,7 @@ use std::sync::{mpsc, OnceLock};
 
 use crate::render::BufId;
 use crate::term::TermPos;
-use crate::tui::TextSeverity;
+use crate::tui::{TermBox, TextSeverity};
 use crate::window::Component;
 use crate::{term, window::Window};
 
@@ -49,15 +49,23 @@ pub struct CommandLine {
 }
 
 impl CommandLine {
-    pub fn take_general_input(&mut self) {
-        if let Ok(msg) = self.msg_rx.try_recv() {
+    pub fn take_general_input(&mut self, tui: &TermGrid) {
+        while let Ok(msg) = self.msg_rx.try_recv() {
             self.set_mode(CommandLineMode::Output);
             let s: &str = match &msg {
                 CmdMsg::Str(s) => s,
                 CmdMsg::Gmsg(s) => s,
             };
+            log!("{s:?}");
             self.output_severity = crate::tui::TextSeverity::Normal;
             self.output_buf.insert_str(s);
+        }
+
+        if self.output_buf.linecnt() > 1 {
+            let (w, h) = tui.dim();
+            let lncnt = self.output_buf.linecnt() as u32;
+            self.window.set_size_outer(w, h - lncnt.max(h - 4));
+            self.window.snap_to_bottom(tui);
         }
     }
 
@@ -171,9 +179,12 @@ impl CommandLine {
         }
     }
 
-    /// resize to fit window
-    pub fn resize(&mut self, tui: &TermGrid) {
+    /// resize to fit window and reset to original size
+    pub fn reset_visual(&mut self, tui: &TermGrid) {
+        let (w, _h) = tui.dim();
+        self.window.set_size_outer(w, 2);
         self.window.snap_to_bottom(tui);
+        // debug_assert_eq!(self.window.bounds(), TermBox::from_ranges(1..w, (h - 2)..h))
     }
 
     /// sends a message to the command line output, and will be displayed on next render call. This

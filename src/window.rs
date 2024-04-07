@@ -282,7 +282,7 @@ impl Window {
         self.bounds
     }
 
-    fn real_bounds(&self) -> TermBox {
+    pub fn inner_bounds(&self) -> TermBox {
         let start = TermPos {
             x: self.bounds.start.x - self.padding.left,
             y: self.bounds.start.y - self.padding.top,
@@ -300,7 +300,7 @@ impl Window {
         self.bounds.end.y = self.bounds.start.y + newy;
     }
 
-    pub fn set_size_padded(&mut self, newx: u32, newy: u32) {
+    pub fn set_size_outer(&mut self, newx: u32, newy: u32) {
         let w = newx - self.padding.left - self.padding.right;
         let h = newy - self.padding.top - self.padding.bottom;
         self.bounds.end.x = self.bounds.start.x + w;
@@ -311,10 +311,10 @@ impl Window {
     /// clamp the window to the screen, moving the window and also shrinking if necessary.
     pub fn clamp_to_screen(&mut self, tui: &TermGrid) {
         let (tw, th) = tui.dim();
-        let real = self.real_bounds();
+        let real = self.inner_bounds();
         let w = real.xlen().min(tw);
         let h = real.ylen().min(th);
-        self.set_size_padded(w, h);
+        self.set_size_outer(w, h);
         if real.end.x >= tw {
             assert!(self.padding.w() < tw, "resize too small");
             self.bounds.end.x = tw - self.padding.right;
@@ -332,10 +332,10 @@ impl Window {
     /// snap the window to the bottom of the screen
     pub fn snap_to_bottom(&mut self, tui: &TermGrid) {
         let (_, h) = tui.dim();
-        let ch = self.real_bounds().ylen();
+        let ch = self.inner_bounds().ylen();
         self.bounds.start.y = h - ch + self.padding.top;
         self.bounds.end.y = h - self.padding.bottom;
-        debug_assert_eq!(ch, self.real_bounds().ylen());
+        debug_assert_eq!(ch, self.inner_bounds().ylen());
         self.clamp_to_screen(tui);
     }
 
