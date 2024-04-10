@@ -1,10 +1,15 @@
+mod components;
+pub use components::*;
+pub mod org;
+
 use crate::debug::{log, sleep};
 use crate::prelude::*;
 use crate::render::BufId;
-use crate::tui::TermBox;
+use crate::tui::{TermBox, TermSz};
 use std::fmt::Write;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::buffer::DocPos;
+use crate::buffer::{Buffer, DocPos};
 use crate::render::Ctx;
 use crate::term;
 use crate::term::TermPos;
@@ -13,7 +18,7 @@ use terminal_size::terminal_size;
 use unicode_truncate::UnicodeTruncateStr;
 
 #[derive(Default, Debug)]
-struct Padding {
+pub struct Padding {
     top: u32,
     bottom: u32,
     left: u32,
@@ -21,6 +26,10 @@ struct Padding {
 }
 
 impl Padding {
+    const fn sz(&self) -> TermSz {
+        TermSz::new(self.w(), self.h())
+    }
+
     const fn w(&self) -> u32 {
         self.left + self.right
     }
@@ -30,205 +39,23 @@ impl Padding {
     }
 }
 
-trait DispComponent {
-    /// write the component
-    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx);
-
-    /// amount of padding needed left, top, bottom, right
-    fn padding(&self) -> Padding;
-}
-
-pub enum Component {
-    RelLineNumbers,
-    StatusLine,
-    Welcome,
-    CommandPrefix,
-}
-
-impl DispComponent for Component {
-    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
-        match self {
-            Component::RelLineNumbers => RelLineNumbers.draw(win, buffer, ctx),
-            Component::StatusLine => StatusLine.draw(win, buffer, ctx),
-            Component::Welcome => Welcome.draw(win, buffer, ctx),
-            Component::CommandPrefix => CommandPrefix.draw(win, buffer, ctx),
-        }
-    }
-
-    fn padding(&self) -> Padding {
-        match self {
-            Component::RelLineNumbers => RelLineNumbers.padding(),
-            Component::StatusLine => StatusLine.padding(),
-            Component::Welcome => Welcome.padding(),
-            Component::CommandPrefix => CommandPrefix.padding(),
-        }
-    }
-}
-
-pub struct RelLineNumbers;
-impl DispComponent for RelLineNumbers {
-    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
-        let linecnt = buffer.linecnt();
-        let y = buffer.cursor.win_pos(win).y;
-        let mut tui = ctx.tui.borrow_mut();
-
-        for l in 0..win.height() {
-            let winbase = win.reltoabs(TermPos { x: 0, y: l });
-
-            let mut target = tui
-                .refline(winbase.y, (winbase.x - 5)..(winbase.x));
-
-            // write!(target, "X").unwrap();
-            // continue;
-            let fg = BasicColor::Green;
-            let bg = BasicColor::Default;
-            if l == y {
-                target.set_color(Color { fg, bg, ..Color::new()});
-                write!(target, " {:<3} ", l as usize + buffer.cursor.topline + 1).unwrap();
-            } else if l as usize + buffer.cursor.topline < linecnt {
-                target.set_color(Color { fg, bg, ..Color::new()});
-                write!(target, "{:>4} ", y.abs_diff(l)).unwrap();
-            } else {
-                write!(target, "{:5}", ' ').unwrap();
-            }
-        }
-    }
-
-    fn padding(&self) -> Padding {
-        Padding {
-            top: 0,
-            bottom: 0,
-            left: 5,
-            right: 0,
-        }
-    }
-}
-
-pub struct Welcome;
-impl DispComponent for Welcome {
-    fn draw(&self, win: &Window, _buffer: &Buffer, ctx: &Ctx) {
-        if !win.dirty {
-            let s = include_str!("../assets/welcome.txt");
-            let top = (win.height() - s.lines().count() as u32) / 2;
-            let mut target = ctx.tui.borrow_mut();
-            s.lines()
-                .enumerate()
-                .map(|(idx, line)| {
-                    let mut refline = target.refline(top + idx as u32, ..);
-                    write!(refline, "{:^w$}", line, w = win.width() as usize).unwrap();
-                })
-                .last();
-        }
-    }
-
-    fn padding(&self) -> Padding {
-        Padding {
-            top: 0,
-            bottom: 0,
-            left: 0,
-            right: 0,
-        }
-    }
-}
-
-pub struct CommandPrefix;
-impl DispComponent for CommandPrefix {
-    fn draw(&self, win: &Window, _buffer: &Buffer, ctx: &Ctx) {
-        use crate::command::cmdline::CommandType;
-        let base = win.reltoabs(TermPos { x: 0, y: 0 });
-        let lead = match ctx.cmdtype() {
-            CommandType::Ex => ':',
-            CommandType::None => ' ',
-            CommandType::Find => '/',
-        };
-
-        let mut target = ctx.tui.borrow_mut();
-        target.put_cell(
-            TermPos {
-                x: base.x - 1,
-                y: base.y,
-            },
-            lead,
-        );
-    }
-
-    fn padding(&self) -> Padding {
-        Padding {
-            top: 0,
-            bottom: 0,
-            left: 1,
-            right: 0,
-        }
-    }
-}
-
-pub struct StatusLine;
-impl DispComponent for StatusLine {
-    fn padding(&self) -> Padding {
-        Padding {
-            top: 1,
-            bottom: 0,
-            left: 0,
-            right: 0,
-        }
-    }
-
-    fn draw(&self, win: &Window, buffer: &Buffer, ctx: &Ctx) {
-        let base = win.reltoabs(TermPos { x: 0, y: 0 });
-
-        let (color, mode_str) = match ctx.mode {
-            crate::Mode::Normal => (
-                Color {
-                    fg: BasicColor::Black,
-                    bg: BasicColor::Blue,
-                    bold: true,
-                },
-                " NORMAL ",
-            ),
-            crate::Mode::Insert => (
-                Color {
-                    fg: BasicColor::Black,
-                    bg: BasicColor::Yellow,
-                    bold: true,
-                },
-                " INSERT ",
-            ),
-            crate::Mode::Command => (
-                Color {
-                    fg: BasicColor::Black,
-                    bg: BasicColor::Green,
-                    bold: true,
-                },
-                " COMMAND ",
-            ),
-        };
-        let mut target = ctx.tui.borrow_mut();
-        let w = target.dim().0;
-        let y = base.y - 1;
-        let mut refline = target.refline(y, ..).colored(color);
-        write!(refline, "{mode_str}").unwrap();
-        let name = buffer.name();
-        refline.set_color(Color {
-            bg: BasicColor::Black,
-            ..Color::default()
-        });
-        write!(refline, " {name}").unwrap();
-        let _ = write!(refline, "{:x$}", "", x = w as usize);
-    }
-}
-
+/// A Window. Equality is done via pointer equality
 pub struct Window {
-    bounds: TermBox,
-    components: Vec<Component>,
-    padding: Padding,
-    dirty: bool,
+    inner: RwLock<WindowInner>
 }
 
 impl Window {
-    pub fn new(tui: &TermGrid) -> Self {
+    pub fn get(&self) -> RwLockReadGuard<WindowInner> {
+        self.inner.read().unwrap()
+    }
+
+    pub fn get_mut(&self) -> RwLockWriteGuard<WindowInner> {
+        self.inner.write().unwrap()
+    }
+
+    pub fn new(bounds: TermBox, buffer: Arc<Buffer>) -> Arc<Self> {
         let components = vec![Component::RelLineNumbers];
-        let (w, h) = tui.dim();
-        Self::new_withdim(TermPos { x: 0, y: 0 }, w, h, components)
+        Self::new_withdim(bounds.start, bounds.sz().w, bounds.sz().h, components, buffer)
     }
 
     pub fn new_withdim(
@@ -236,7 +63,8 @@ impl Window {
         width: u32,
         height: u32,
         mut components: Vec<Component>,
-    ) -> Self {
+        buffer: Arc<Buffer>,
+    ) -> Arc<Self> {
         let dirty = true;
         if !dirty {
             components.push(Component::Welcome);
@@ -259,7 +87,7 @@ impl Window {
                 }
             },
         );
-        let out = Self {
+        let out = WindowInner {
             bounds: TermBox {
                 start: TermPos {
                     x: topleft.x + padding.left,
@@ -273,16 +101,48 @@ impl Window {
             components,
             padding,
             dirty,
+            next: None,
+            prev: None,
+            buffer,
         };
         out.bounds.assert_valid();
-        out
+        let out: Window = out.into();
+        out.into()
     }
+}
 
-    pub fn bounds(&self) -> TermBox {
+impl std::cmp::PartialEq for Window {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl std::cmp::Eq for Window {}
+
+impl From<WindowInner> for Window {
+    fn from(value: WindowInner) -> Self {
+        Window { inner: value.into() }
+    }
+}
+
+
+pub struct WindowInner {
+    pub buffer: Arc<Buffer>,
+    pub next: Option<Arc<Window>>,
+    pub prev: Option<Arc<Window>>,
+    bounds: TermBox,
+    components: Vec<Component>,
+    padding: Padding,
+    dirty: bool,
+}
+
+impl WindowInner {
+
+    pub fn inner_bounds(&self) -> TermBox {
         self.bounds
     }
 
-    pub fn inner_bounds(&self) -> TermBox {
+    pub fn outer_bounds(&self) -> TermBox {
         let start = TermPos {
             x: self.bounds.start.x - self.padding.left,
             y: self.bounds.start.y - self.padding.top,
@@ -294,24 +154,41 @@ impl Window {
         TermBox { start, end }
     }
 
-    /// probably don't want to use this since it erases padding
-    pub fn set_size(&mut self, newx: u32, newy: u32) {
-        self.bounds.end.x = self.bounds.start.x + newx;
-        self.bounds.end.y = self.bounds.start.y + newy;
+    pub fn set_bounds_outer(&mut self, bounds: TermBox) {
+        let start = TermPos {
+            x: bounds.start.x - self.padding.left,
+            y: bounds.start.y - self.padding.top,
+        };
+        let end = TermPos {
+            x: bounds.end.x + self.padding.right,
+            y: bounds.end.y + self.padding.bottom,
+        };
+        self.bounds = TermBox { start, end }
     }
 
-    pub fn set_size_outer(&mut self, newx: u32, newy: u32) {
-        let w = newx - self.padding.left - self.padding.right;
-        let h = newy - self.padding.top - self.padding.bottom;
+    pub fn set_bounds_inner(&mut self, bounds: TermBox) {
+        self.bounds = bounds
+    }
+
+    /// do not use directly - should be through window org
+    pub fn set_size_outer(&mut self, w: u32, h: u32) {
+        let w = w - self.padding.left - self.padding.right;
+        let h = h - self.padding.top - self.padding.bottom;
         self.bounds.end.x = self.bounds.start.x + w;
         self.bounds.end.y = self.bounds.start.y + h;
         self.bounds.assert_valid();
     }
 
+    /// do not use directly - should be through window org
+    pub fn set_size_inner(&mut self, w: u32, h: u32) {
+        self.bounds.end.x = self.bounds.start.x + w;
+        self.bounds.end.y = self.bounds.start.y + h;
+    }
+
     /// clamp the window to the screen, moving the window and also shrinking if necessary.
-    pub fn clamp_to_screen(&mut self, tui: &TermGrid) {
-        let (tw, th) = tui.dim();
-        let real = self.inner_bounds();
+    pub fn clamp_to_bounds(&mut self, bounds: &TermBox) {
+        let TermSz {w: tw, h: th} = bounds.sz();
+        let real = self.outer_bounds();
         let w = real.xlen().min(tw);
         let h = real.ylen().min(th);
         self.set_size_outer(w, h);
@@ -329,14 +206,14 @@ impl Window {
         }
     }
 
-    /// snap the window to the bottom of the screen
-    pub fn snap_to_bottom(&mut self, tui: &TermGrid) {
-        let (_, h) = tui.dim();
-        let ch = self.inner_bounds().ylen();
+    /// snap the window to the bottom of the bounds
+    pub fn snap_to_bottom(&mut self, bounds: &TermBox) {
+        let TermSz { h, .. } = bounds.sz();
+        let ch = self.outer_bounds().ylen();
         self.bounds.start.y = h - ch + self.padding.top;
         self.bounds.end.y = h - self.padding.bottom;
-        debug_assert_eq!(ch, self.inner_bounds().ylen());
-        self.clamp_to_screen(tui);
+        debug_assert_eq!(ch, self.outer_bounds().ylen());
+        self.clamp_to_bounds(bounds);
     }
 
     pub fn width(&self) -> u32 {
@@ -354,11 +231,19 @@ impl Window {
         }
     }
 
-    pub fn draw_buf(&self, ctx: &Ctx, buf: &Buffer) {
+    pub fn draw(&self, ctx: &Ctx) {
+        self.draw_buf_colored(ctx, &self.buffer.get(), Color::default());
+    }
+
+    pub fn draw_colored(&self, ctx: &Ctx, color: Color) {
+        self.draw_buf_colored(ctx, &self.buffer.get(), color);
+    }
+
+    fn draw_buf(&self, ctx: &Ctx, buf: &BufferInner) {
         self.draw_buf_colored(ctx, buf, Color::default());
     }
 
-    pub fn draw_buf_colored(&self, ctx: &Ctx, buf: &Buffer, color: Color) {
+    fn draw_buf_colored(&self, ctx: &Ctx, buf: &BufferInner, color: Color) {
         {
             let mut tui = ctx.tui.borrow_mut();
             let range = buf.cursor.topline
@@ -382,7 +267,12 @@ impl Window {
         self.components.iter().for_each(|x| x.draw(self, &buf, ctx));
     }
 
-    pub fn move_cursor(&mut self, buf: &mut Buffer, dx: isize, dy: isize) {
+    pub fn draw_cursor(&self, tui: &mut TermGrid) {
+        self.buffer.get().cursor.draw(self, tui)
+    }
+
+    pub fn move_cursor(&mut self, dx: isize, dy: isize) {
+        let mut buf = self.buffer.get_mut();
         let newy = buf
             .cursor
             .pos
@@ -405,7 +295,8 @@ impl Window {
         self.fit_ctx_frame(&mut buf.cursor);
     }
 
-    pub fn set_pos(&mut self, buf: &mut Buffer, pos: DocPos) {
+    pub fn set_pos(&mut self, pos: DocPos) {
+        let mut buf = self.buffer.get_mut();
         let newy = pos.y.clamp(0, buf.linecnt().saturating_sub(1));
         buf.cursor.pos.y = newy;
         let line = &buf.line(newy);
@@ -414,7 +305,7 @@ impl Window {
         self.fit_ctx_frame(&mut buf.cursor);
     }
 
-    pub fn fit_ctx_frame(&mut self, cursor: &mut Cursor) {
+    pub fn fit_ctx_frame(&self, cursor: &mut Cursor) {
         let y = cursor.pos.y;
         let top = cursor.topline;
         let h = self.height() as usize;
@@ -433,48 +324,54 @@ impl Window {
 mod test {
     use super::*;
 
-    fn basic_context() -> Ctx {
-        let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
-        let mut ctx = Ctx::new_testing(b);
-        ctx.window = Window {
-            bounds: TermBox {
-                start: TermPos { x: 0, y: 0 },
-                end: TermPos { x: 7, y: 32 },
-            },
-            components: vec![],
-            padding: Padding::default(),
-            dirty: false,
-        };
-        ctx
-    }
-
-    fn scroll_context() -> Ctx {
-        let b = Buffer::from_str("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast");
-        let mut ctx = Ctx::new_testing(b);
-        ctx.window = Window {
-            bounds: TermBox {
-                start: TermPos { x: 0, y: 0 },
-                end: TermPos { x: 7, y: 10 },
-            },
-            components: vec![],
-            padding: Padding::default(),
-            dirty: false,
-        };
-        ctx
-    }
-
-    fn blank_context() -> Ctx {
-        let b = Buffer::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
-        let mut ctx = Ctx::new_testing(b);
-        ctx.window = Window {
-            bounds: TermBox {
-                start: TermPos { x: 0, y: 0 },
-                end: TermPos { x: 7, y: 32 },
-            },
-            components: vec![],
-            padding: Padding::default(),
-            dirty: false,
-        };
-        ctx
-    }
+    // fn basic_context() -> Ctx {
+    //     let b = BufferInner::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
+    //     let mut ctx = Ctx::new_testing(b);
+    //     ctx.window = WindowInner {
+    //         bounds: TermBox {
+    //             start: TermPos { x: 0, y: 0 },
+    //             end: TermPos { x: 7, y: 32 },
+    //         },
+    //         components: vec![],
+    //         padding: Padding::default(),
+    //         dirty: false,
+    //         next: None,
+    //         prev: None,
+    //     };
+    //     ctx
+    // }
+    //
+    // fn scroll_context() -> Ctx {
+    //     let b = BufferInner::from_str("0\n1\n22\n333\n4444\n55555\n\n\n\n\n\n\n\nLast");
+    //     let mut ctx = Ctx::new_testing(b);
+    //     ctx.window = WindowInner {
+    //         bounds: TermBox {
+    //             start: TermPos { x: 0, y: 0 },
+    //             end: TermPos { x: 7, y: 10 },
+    //         },
+    //         components: vec![],
+    //         padding: Padding::default(),
+    //         dirty: false,
+    //         next: None,
+    //         prev: None,
+    //     };
+    //     ctx
+    // }
+    //
+    // fn blank_context() -> Ctx {
+    //     let b = BufferInner::from_str("0\n1\n22\n333\n4444\n\nnotrnc\ntruncated line");
+    //     let mut ctx = Ctx::new_testing(b);
+    //     ctx.window = WindowInner {
+    //         bounds: TermBox {
+    //             start: TermPos { x: 0, y: 0 },
+    //             end: TermPos { x: 7, y: 32 },
+    //         },
+    //         components: vec![],
+    //         padding: Padding::default(),
+    //         dirty: false,
+    //         next: None,
+    //         prev: None,
+    //     };
+    //     ctx
+    // }
 }

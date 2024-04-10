@@ -1,4 +1,4 @@
-pub use crate::buffer::Buffer;
+pub use crate::buffer::BufferInner;
 pub use crate::buffer::Cursor;
 pub use crate::buffer::DocPos;
 pub use crate::buffer::FileOff;

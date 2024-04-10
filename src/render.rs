@@ -22,45 +22,39 @@ use std::fmt::Write;
 use std::ops::Range;
 use std::os::unix::io::RawFd;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::RwLockReadGuard;
+use std::sync::RwLockWriteGuard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum BufId {
-    Normal(usize),
-    Anon(usize),
+pub struct BufId {
+    id: u64,
 }
 
-#[cfg(test)]
 impl BufId {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     pub fn new() -> Self {
-        BufId::Normal(1)
-    }
-}
-
-impl BufId {
-    pub fn id(&self) -> usize {
-        match self {
-            BufId::Normal(id) => *id,
-            BufId::Anon(id) => *id,
-        }
-    }
-
-    pub fn new_anon() -> Self {
-        static ANON_ID_COUNTER: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        Self::Anon(ANON_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        static ANON_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = ANON_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        BufId { id }
     }
 }
 
 pub struct Ctx {
     id_counter: usize,
-    buffers: std::collections::BTreeMap<BufId, Buffer>,
+    first_buffer: Arc<Buffer>,
+    last_buffer: Arc<Buffer>,
     termios: Termios,
     orig_termios: Termios,
     command_line: CommandLine,
-    focused: BufId,
+    focused_buf: Arc<Buffer>,
+    focused_win: Arc<Window>,
+    root: crate::window::org::Node,
     pub tui: RefCell<TermGrid>,
     pub term_fd: RawFd,
-    pub window: Window,
     pub mode: Mode,
 }
 
@@ -70,23 +64,24 @@ fn get_termsize() -> (u32, u32) {
 
 #[cfg(test)]
 impl Ctx {
-    pub fn new_testing(buf: Buffer) -> Self {
+    pub fn new_testing(buf: Arc<Buffer>) -> Self {
         let term = libc::STDIN_FILENO;
         let termios = termios::tcgetattr(term).unwrap();
-        let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
-        let window = Window::new(&tui);
+        let window = Window::new(tui.bounds(), Arc::clone(&buf));
         Self {
             id_counter: 2,
-            buffers: BTreeMap::from([(bufid, buf)]),
+            first_buffer: Arc::clone(&buf),
+            last_buffer: Arc::clone(&buf),
             termios: termios.clone(),
             orig_termios: termios,
             term_fd: term,
             command_line: CommandLine::new(&tui),
             tui: tui.into(),
             mode: Mode::Normal,
-            window,
-            focused: bufid,
+            focused_buf: buf,
+            focused_win: Arc::clone(&window),
+            root: window.into(),
         }
     }
 }
@@ -96,7 +91,8 @@ impl Ctx {
         let buf = Buffer::open(file)?;
         Ok(Self::from_buffer(term, buf))
     }
-    pub fn from_buffer(term: RawFd, buf: Buffer) -> Self {
+
+    pub fn from_buffer(term: RawFd, buf: Arc<Buffer>) -> Self {
         term::altbuf_enable();
         term::flush();
         let mut termios = termios::tcgetattr(term).unwrap();
@@ -105,7 +101,6 @@ impl Ctx {
         termios.local_flags.remove(LocalFlags::ECHO);
         termios.local_flags.insert(LocalFlags::ISIG);
         termios::tcsetattr(term, termios::SetArg::TCSANOW, &termios).unwrap();
-        let bufid = BufId::Normal(1);
         let tui = TermGrid::new();
         let components = vec![crate::window::Component::RelLineNumbers];
         let window = Window::new_withdim(
@@ -113,27 +108,22 @@ impl Ctx {
             tui.dim().0,
             tui.dim().1 - 2,
             components,
+            Arc::clone(&buf),
         );
         Self {
             id_counter: 2,
-            buffers: BTreeMap::from([(bufid, buf)]),
+            first_buffer: Arc::clone(&buf),
+            last_buffer: Arc::clone(&buf),
             termios,
             orig_termios: orig,
             term_fd: term,
             mode: Mode::Normal,
-            window,
             command_line: CommandLine::new(&tui),
             tui: tui.into(),
-            focused: bufid,
+            focused_win: Arc::clone(&window),
+            focused_buf: buf,
+            root: window.into(),
         }
-    }
-
-    pub fn getbuf_mut(&mut self, buf: BufId) -> Option<&mut Buffer> {
-        self.buffers.get_mut(&buf)
-    }
-
-    pub fn getbuf(&self, buf: BufId) -> Option<&Buffer> {
-        self.buffers.get(&buf)
     }
 
     pub fn cmdtype(&self) -> crate::command::cmdline::CommandType {
@@ -145,17 +135,17 @@ impl Ctx {
             let tui = self.tui.get_mut();
             if tui.resize_auto() {
                 self.command_line.reset_visual(tui);
-                self.window.set_size_outer(tui.dim().0, tui.dim().1);
+                self.root.fit(tui.bounds());
             }
         }
         self.command_line.take_general_input(&self.tui.get_mut());
         let _ = self.command_line.render(self);
-        self.window.draw_buf(self, self.focused_buf());
+        self.root.draw(self);
 
         match self.mode {
             Mode::Normal | Mode::Insert => {
                 let tui = self.tui.get_mut();
-                self.buffers[&self.focused].cursor.draw(&self.window, tui)
+                self.focused_win.get().draw_cursor(tui);
             }
             Mode::Command => {
                 let tui = self.tui.get_mut();
@@ -167,20 +157,18 @@ impl Ctx {
         self.tui.get_mut().render(&mut stdout).unwrap();
     }
 
-    pub fn focused(&self) -> BufId {
-        self.focused
+    pub fn focused_buf(&self) -> RwLockReadGuard<BufferInner> {
+        self.focused_buf.get()
     }
 
-    pub fn focused_buf(&self) -> &Buffer {
-        &self.buffers[&self.focused()]
-    }
-
-    pub fn open_buffer(&mut self, buf: Buffer) {
-        let buf_id = BufId::Normal(self.id_counter);
+    pub fn open_buffer(&mut self, buf: Arc<Buffer>) {
         self.id_counter += 1;
-        self.buffers
-            .insert(buf_id, buf)
-            .map(|_| panic!("Buf insertion tried to reuse an id"));
+        if std::ptr::eq(&*self.first_buffer, &*self.last_buffer) {
+            self.first_buffer = Arc::clone(&buf);
+        }
+        self.last_buffer = Arc::clone(&buf);
+        self.focused_buf = Arc::clone(&buf);
+        self.focused_win.get_mut().buffer = buf;
         self.tui.borrow_mut().clear();
     }
 
@@ -203,27 +191,23 @@ impl Ctx {
         &mut self.command_line
     }
 
-    pub fn buffers(&self) -> impl Iterator<Item = (usize, &str)> {
-        self.buffers
-            .iter()
-            .filter(|(k, _)| matches!(k, BufId::Normal(_)))
-            .map(|(k, v)| (k.id(), v.name()))
-    }
-
     fn apply_motion(&mut self, motion: Motion) -> Option<Range<usize>> {
-        let buf = self.buffers.get_mut(&self.focused).unwrap();
-        let start = buf.cursor.pos;
+        let start = self.focused_buf().cursor.pos;
         match motion {
             Motion::ScreenSpace { dy, dx } => {
-                self.window.move_cursor(buf, dx, dy);
+                self.focused_win.get_mut().move_cursor(dx, dy);
             }
             Motion::BufferSpace { doff: _ } => todo!(),
             Motion::TextObj(_) => panic!("text objects cannot be move targets"),
             Motion::TextMotion(m) => {
+                let buf = self.focused_buf.get();
                 let newoff = m(&buf, buf.coff())?;
-                self.window.set_pos(buf, buf.offset_to_pos(newoff));
+                let pos = buf.offset_to_pos(newoff);
+                drop(buf);
+                self.focused_win.get_mut().set_pos(pos);
             }
         }
+        let buf = self.focused_buf.get_mut();
         let end = buf.cursor.pos;
         let (start, end) = {
             let mut start = start;
@@ -248,9 +232,9 @@ impl Ctx {
         let motion_range = if let Some(m) = action.motion {
             Some(match m {
                 Motion::TextObj(r) => {
-                    let buf = self.buffers.get(&self.focused).unwrap();
+                    let buf = self.focused_buf();
                     let pos = buf.coff();
-                    r(buf, pos)
+                    r(&buf, pos)
                 }
                 _ => self.apply_motion(m),
             })
@@ -293,35 +277,33 @@ impl Ctx {
                 Operation::Change => {
                     let range = motion_range.expect("change requires motion");
                     if let Some(range) = range {
-                        let buf = self.buffers.get_mut(&self.focused()).unwrap();
-                        buf.delete_range(range);
+                        self.focused_buf.get_mut().delete_range(range);
                         self.set_mode(Mode::Insert);
                     }
                 }
                 Operation::Delete => {
                     let range = motion_range.expect("delete requires motion");
                     if let Some(range) = range {
-                        let buf = self.buffers.get_mut(&self.focused()).unwrap();
-                        buf.delete_range(range);
+                        self.focused_buf.get_mut().delete_range(range);
                     }
                 }
                 Operation::Insert(c) => {
-                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                    let mut buf = self.focused_buf.get_mut();
                     buf.insert_str(c.replace('\r', "\n").as_str());
-                    self.window.fit_ctx_frame(&mut buf.cursor);
+                    self.focused_win.get().fit_ctx_frame(&mut buf.cursor);
                     if let Some(pos) = c.bytes().rev().position(|b| b == b'\r') {
                         buf.cursor.virtcol = pos
                     }
                 }
                 Operation::DeleteBefore => {
-                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
-                    buf.delete_char_before();
+                    self.focused_buf.get_mut().delete_char_before();
                 }
                 Operation::DeleteAfter => {
-                    let buf = self.buffers.get_mut(&self.focused()).unwrap();
+                    let mut buf = self.focused_buf.get_mut();
                     buf.delete_char();
                     if buf.cursor.pos.x != 0 {
-                        self.window.move_cursor(buf, 1, 0);
+                        drop(buf);
+                        self.focused_win.get_mut().move_cursor(1, 0);
                     }
                 }
                 Operation::SwitchMode(m) => self.set_mode(m),
@@ -331,8 +313,8 @@ impl Ctx {
                     write!(self.warning(), "not yet implemented").unwrap();
                 }
                 Operation::RecenterView => self
-                    .window
-                    .center_view(&mut self.buffers.get_mut(&self.focused()).unwrap().cursor),
+                    .focused_win.get_mut()
+                    .center_view(&mut self.focused_buf.get_mut().cursor),
             },
         };
         if let Some(m) = action.post_motion {

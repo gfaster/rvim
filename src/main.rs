@@ -10,6 +10,7 @@ mod textobj;
 mod tui;
 mod window;
 mod guile;
+mod utils;
 use prelude::*;
 
 use libc::STDIN_FILENO;

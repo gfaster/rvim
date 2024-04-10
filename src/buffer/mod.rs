@@ -1,4 +1,5 @@
-use crate::{prelude::*, render::BufId, term::TermPos, window::Window};
+use crate::{prelude::*, render::BufId, term::TermPos, window::WindowInner};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{cell::Cell, ops::RangeBounds};
 use std::{
     fmt::{Display, Write},
@@ -43,16 +44,16 @@ impl DocPos {
 pub trait FileOff: Copy {
     /// file offsets are constrained to representing one byte past the end of the file so that we
     /// can represent ranges. Panics if it corresponds to an invalid position. .
-    fn pos(&self, buf: &Buffer) -> DocPos {
+    fn pos(&self, buf: &BufferInner) -> DocPos {
         self.try_pos(buf).expect("Valid position")
     }
 
     /// like `pos`, but returns `None` on invalid position.
-    fn try_pos(&self, buf: &Buffer) -> Option<DocPos>;
+    fn try_pos(&self, buf: &BufferInner) -> Option<DocPos>;
 }
 
 impl FileOff for usize {
-    fn try_pos(&self, buf: &Buffer) -> Option<DocPos> {
+    fn try_pos(&self, buf: &BufferInner) -> Option<DocPos> {
         if *self > buf.len() {
             None
         } else {
@@ -130,54 +131,100 @@ impl std::default::Default for BufferCore {
     }
 }
 
+pub struct Buffer {
+    id: BufId,
+    inner: RwLock<BufferInner>
+}
+
+impl Buffer {
+    pub fn id(&self) -> BufId {
+        self.id
+    }
+
+    pub fn new() -> Arc<Self> {
+        Buffer {
+            id: BufId::new(),
+            inner: BufferInner::new().into()
+        }.into()
+    }
+
+    pub fn get(&self) -> RwLockReadGuard<BufferInner> {
+        self.inner.try_read().expect("Same-thread deadlock")
+    }
+
+    pub fn get_mut(&self) -> RwLockWriteGuard<BufferInner> {
+        self.inner.try_write().expect("Same-thread deadlock")
+    }
+
+    pub fn open(file: &std::path::Path) -> std::io::Result<Arc<Self>> {
+        Ok(Buffer { inner: BufferInner::open(file)?.into(), id: BufId::new() }.into())
+    }
+}
+
 /// View of a buffer that includes its cursor. I may change this to allow the cursor to have
 /// interior mutability
-pub struct Buffer {
-    // id: BufId,
+pub struct BufferInner {
+    next: Option<Arc<Buffer>>,
+    prev: Option<Arc<Buffer>>,
     pub cursor: Cursor,
     text: BufferCore,
 }
 
-impl Display for Buffer {
+impl Display for BufferInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         <BufferCore as Display>::fmt(&self.text, f)
     }
 }
 
-impl Buffer {
+impl BufferInner {
     pub fn new() -> Self {
-        Buffer {
+        BufferInner {
             cursor: Cursor::new(),
             text: BufferCore::new(),
+            next: None,
+            prev: None,
         }
     }
+
     pub fn open(file: &std::path::Path) -> std::io::Result<Self> {
-        Ok(Buffer {
+        Ok(BufferInner {
             cursor: Cursor::new(),
             text: BufferCore::open(file)?,
+            next: None,
+            prev: None,
         })
     }
+
     pub fn from_string(s: impl AsRef<str>) -> Self {
-        Buffer {
+        BufferInner {
             cursor: Cursor::new(),
             text: BufferCore::from_str(s),
+            next: None,
+            prev: None,
         }
     }
+
     pub fn from_str(s: &str) -> Self {
-        Buffer {
+        BufferInner {
             cursor: Cursor::new(),
             text: BufferCore::from_str(s),
+            next: None,
+            prev: None,
         }
     }
+
     pub fn name(&self) -> &str {
         self.text.name()
     }
+
     pub fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         self.text.serialize(writer)
     }
+
     pub fn get_lines(&self, lines: std::ops::Range<usize>) -> Vec<&str> {
         self.text.get_lines(lines)
     }
+
     /// delete the character the cursor is on. This is the behavior of 'x' key. The cursor will
     /// keep its position unless its the last non-lf character of the line, in which case it will
     /// be clamped to the line.
@@ -203,33 +250,43 @@ impl Buffer {
         self.cursor.set_pos(new_pos);
         Some(self.text.delete_char(off))
     }
+
     pub fn linecnt(&self) -> usize {
         self.text.linecnt()
     }
+
     pub fn end(&self) -> DocPos {
         self.text.offset_to_pos(self.text.len())
     }
+
     pub fn last(&self) -> Option<DocPos> {
         Some(self.text.offset_to_pos(self.text.len().checked_sub(1)?))
     }
+
     pub fn insert_str(&mut self, s: &str) {
         self.text.insert_str(&mut self.cursor, s)
     }
+
     pub fn path(&self) -> Option<&std::path::Path> {
         self.text.path()
     }
+
     pub fn set_path(&mut self, path: std::path::PathBuf) {
         self.text.set_path(path)
     }
+
     pub fn len(&self) -> usize {
         self.text.len()
     }
+
     pub fn clear(&mut self) {
         self.text.clear(&mut self.cursor)
     }
+
     pub fn char_at(&self, off: usize) -> char {
         self.text.get_char(off)
     }
+
     pub fn line(&self, idx: usize) -> &str {
         self.get_lines(idx..(idx + 1))[0]
     }
@@ -290,9 +347,9 @@ impl Buffer {
     }
 
     /// draw this buffer in a window
-    pub fn draw(&self, win: &Window, ctx: &Ctx) {
+    pub fn draw(&self, win: &WindowInner, ctx: &Ctx) {
         let mut tui = ctx.tui.borrow_mut();
-        let _ = write!(tui.refbox(win.bounds()), "{}", self.text);
+        let _ = write!(tui.refbox(win.inner_bounds()), "{}", self.text);
     }
 
     pub fn chars_bck(&self, off: usize) -> impl Iterator<Item = char> + '_ {
@@ -335,7 +392,7 @@ pub struct Cursor {
 
 impl Cursor {
     /// gets the relative position of the cursor when displayed in win
-    pub fn win_pos(&self, _win: &Window) -> TermPos {
+    pub fn win_pos(&self, _win: &WindowInner) -> TermPos {
         let y = self
             .pos
             .y
@@ -348,10 +405,10 @@ impl Cursor {
     }
 
     /// gets the absolute position of the cursor relative to the origin of the window.
-    pub fn term_pos(&self, win: &Window) -> TermPos {
+    pub fn term_pos(&self, win: &WindowInner) -> TermPos {
         let TermPos { x, y } = self.win_pos(win);
-        let x = x + win.bounds().start.x;
-        let y = y + win.bounds().start.y;
+        let x = x + win.inner_bounds().start.x;
+        let y = y + win.inner_bounds().start.y;
         TermPos { x, y }
     }
 
@@ -363,7 +420,7 @@ impl Cursor {
         }
     }
 
-    pub fn draw(&self, win: &Window, tui: &mut TermGrid) {
+    pub fn draw(&self, win: &WindowInner, tui: &mut TermGrid) {
         tui.set_cursorpos(self.term_pos(win));
     }
 
@@ -437,7 +494,7 @@ pub mod test {
     }
 
     #[track_caller]
-    fn assert_insert_str(b: &mut Buffer, s: &str) {
+    fn assert_insert_str(b: &mut BufferInner, s: &str) {
         let mut buf_str = b.to_string();
         let off = b.text.pos_to_offset(b.cursor.pos);
         buf_str.replace_range(off..off, s);
@@ -449,8 +506,8 @@ pub mod test {
         );
     }
 
-    fn buffer_with_changes() -> Buffer {
-        let mut b = Buffer::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
+    fn buffer_with_changes() -> BufferInner {
+        let mut b = BufferInner::from_str(include_str!("../../assets/test/passage_wrapped.txt"));
         b.cursor.set_pos(DocPos { x: 8, y: 12 });
         assert_insert_str(&mut b, "This is some new text");
         assert_insert_str(&mut b, "This is some more new text");
@@ -472,7 +529,7 @@ pub mod test {
             $fn()
         };
         ($str:literal) => {
-            Buffer::from_str($str)
+            BufferInner::from_str($str)
         };
     }
 
@@ -607,7 +664,7 @@ pub mod test {
         ($name: ident, $str:expr, $start:expr) => {
             #[test]
             fn $name() {
-                let buf = Buffer::from_str($str);
+                let buf = BufferInner::from_str($str);
                 let mut it_test = buf.chars_fwd($start);
                 for c in $str[$start..].chars() {
                     assert_eq!(
@@ -691,13 +748,13 @@ pub mod test {
 
     #[test]
     fn last_single() {
-        let buf = Buffer::from_str("0123456789");
+        let buf = BufferInner::from_str("0123456789");
         assert_eq!(buf.last(), Some(DocPos { x: 9, y: 0 }))
     }
 
     #[test]
     fn last_multiline() {
-        let buf = Buffer::from_str("0123456789\nasdf");
+        let buf = BufferInner::from_str("0123456789\nasdf");
         assert_eq!(buf.last(), Some(DocPos { x: 3, y: 1 }))
     }
 
@@ -737,13 +794,13 @@ pub mod test {
     #[test]
     fn len() {
         let init = "this is a buffer\nasdfasdfasdfa";
-        let buf = Buffer::from_str(init);
+        let buf = BufferInner::from_str(init);
         assert_eq!(buf.len(), init.len());
     }
 
     #[test]
     fn clear() {
-        let mut buf = Buffer::from_str("this is a buffer\nit will be cleared.");
+        let mut buf = BufferInner::from_str("this is a buffer\nit will be cleared.");
         buf.clear();
         assert_eq!(&buf.to_string(), "");
         assert_eq!(buf.cursor.pos, DocPos::new());
@@ -755,7 +812,7 @@ pub mod test {
             #[test]
             fn $name() {
                 let range = normalize_range($str, $range);
-                let mut buf = Buffer::from_str($str);
+                let mut buf = BufferInner::from_str($str);
                 buf.cursor.set_pos(str_doc_pos_off($str, $cursor));
                 let expected_deleted = &$str[$range];
                 let mut expected_remain = String::from($str);

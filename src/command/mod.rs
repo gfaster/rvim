@@ -1,3 +1,4 @@
+use crate::buffer::Buffer;
 use crate::log;
 use crate::{guile, prelude::*};
 use crate::render::Ctx;

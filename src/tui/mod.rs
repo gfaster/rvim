@@ -4,6 +4,24 @@ use std::{
     ops::{Range, RangeBounds, RangeInclusive},
 };
 
+/// This does not implement Ord because it's not obvious what that should be. I want this to not
+/// only represent a w x h scenario but also padding size
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TermSz {
+    pub w: u32,
+    pub h: u32,
+}
+
+impl TermSz {
+    pub const fn new(w: u32, h: u32) -> Self {
+        Self { w, h }
+    }
+
+    pub const fn area(&self) -> u32 {
+        self.w * self.h
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Ord)]
 pub struct TermPos {
     pub x: u32,
@@ -29,12 +47,7 @@ macro_rules! tp {
 
 impl PartialOrd for TermPos {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        let ycmp = self.y.cmp(&other.y);
-        if matches!(ycmp, std::cmp::Ordering::Equal) {
-            Some(self.x.cmp(&other.x))
-        } else {
-            Some(ycmp)
-        }
+        Some(self.y.cmp(&other.y).then(self.x.cmp(&other.x)))
     }
 }
 
@@ -73,6 +86,10 @@ impl TermBox {
         self.end.y - self.start.y
     }
 
+    pub const fn sz(&self) -> TermSz {
+        TermSz { w: self.xlen(), h: self.ylen() }
+    }
+
     pub fn from_ranges(xrng: impl RangeBounds<u32>, yrng: impl RangeBounds<u32>) -> Self {
         let xrng = TermGrid::rangebounds_to_range(xrng);
         let yrng = TermGrid::rangebounds_to_range(yrng);
@@ -80,6 +97,11 @@ impl TermBox {
             start: tp!(xrng.start, yrng.start),
             end: tp!(xrng.end, yrng.end),
         }
+    }
+
+    /// returns true if self is subset of other
+    pub fn is_subset_of(&self, other: &Self) -> bool {
+        self.start >= other.start && self.end <= other.end
     }
 
     #[track_caller]
@@ -272,6 +294,14 @@ impl TermGrid {
         };
         out.resize_auto();
         out
+    }
+
+    pub fn bounds(&self) -> TermBox {
+        TermBox::from_ranges(0..self.w, 0..self.h)
+    }
+
+    pub fn sz(&self) -> TermSz {
+        TermSz { w: self.w, h: self.h }
     }
 
     pub fn dim(&self) -> (u32, u32) {
@@ -549,5 +579,45 @@ impl Write for TermGridBox<'_> {
             self.cursor.x += 1;
         }
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn termbox_subset() {
+        let a = TermBox::from_ranges(0..2, 0..2);
+        let b = TermBox::from_ranges(0..1, 0..2);
+        let c = TermBox::from_ranges(1..2, 0..2);
+        let d = TermBox::from_ranges(1..2, 1..2);
+        let e = TermBox::from_ranges(2..2, 1..2);
+        let f = TermBox::from_ranges(2..2, 2..2);
+
+        let g = TermBox::from_ranges(2..3, 1..2);
+        let h = TermBox::from_ranges(1..3, 0..2);
+        let i = TermBox::from_ranges(0..2, 1..3);
+
+        assert!(b.is_subset_of(&a));
+        assert!(c.is_subset_of(&a));
+        assert!(d.is_subset_of(&a));
+        assert!(e.is_subset_of(&a));
+        assert!(f.is_subset_of(&a));
+
+        assert!(!g.is_subset_of(&a));
+        assert!(!h.is_subset_of(&a));
+        assert!(!i.is_subset_of(&a));
+
+        assert!(a.is_subset_of(&a));
+        assert!(b.is_subset_of(&b));
+        assert!(c.is_subset_of(&c));
+        assert!(d.is_subset_of(&d));
+        assert!(e.is_subset_of(&e));
+        assert!(f.is_subset_of(&f));
+        assert!(g.is_subset_of(&g));
+        assert!(h.is_subset_of(&h));
+        assert!(i.is_subset_of(&i));
     }
 }

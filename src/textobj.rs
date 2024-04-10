@@ -15,8 +15,8 @@ pub enum Motion {
 }
 
 // keeping position as separate argument for potential future proofing
-pub type TextMotion = fn(&Buffer, usize) -> Option<usize>;
-pub type TextObject = fn(&Buffer, usize) -> Option<Range<usize>>;
+pub type TextMotion = fn(&BufferInner, usize) -> Option<usize>;
+pub type TextObject = fn(&BufferInner, usize) -> Option<Range<usize>>;
 
 #[derive(PartialEq, Eq)]
 enum WordCat {
@@ -118,7 +118,7 @@ pub mod motions {
     use super::*;
 
     #[must_use]
-    fn empty_is_none(buf: &Buffer) -> Option<()> {
+    fn empty_is_none(buf: &BufferInner) -> Option<()> {
         if buf.len() == 0 {
             None
         } else {
@@ -126,7 +126,7 @@ pub mod motions {
         }
     }
 
-    pub(crate) fn word_forward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_forward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf.chars_fwd(pos).enumerate().peekable();
         it.next();
@@ -138,7 +138,7 @@ pub mod motions {
             .or_else(|| Some(buf.len()))
     }
 
-    pub(crate) fn word_subset_forward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_subset_forward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf.chars_fwd(pos).enumerate().peekable();
         let init = it.next()?.1.category();
@@ -150,7 +150,7 @@ pub mod motions {
             .or_else(|| Some(buf.len()))
     }
 
-    pub(crate) fn word_end_forward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_end_forward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf
             .chars_fwd(pos).enumerate()
@@ -174,7 +174,7 @@ pub mod motions {
         Some(ret.0)
     }
 
-    pub(crate) fn word_end_subset_forward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_end_subset_forward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf
             .chars_fwd(pos).enumerate()
@@ -199,7 +199,7 @@ pub mod motions {
         Some(ret.0 + pos)
     }
 
-    pub(crate) fn word_backward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_backward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf
             .chars_bck(pos).enumerate()
@@ -223,7 +223,7 @@ pub mod motions {
         Some(pos - ret.0)
     }
 
-    pub(crate) fn word_subset_backward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_subset_backward(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         let mut it = buf
             .chars_bck(pos).enumerate()
@@ -248,7 +248,7 @@ pub mod motions {
         Some(pos - ret.0)
     }
 
-    fn word_end_backward_base(buf: &Buffer, pos: usize, eq: impl Fn(&char, &char) -> bool) -> Option<usize>{
+    fn word_end_backward_base(buf: &BufferInner, pos: usize, eq: impl Fn(&char, &char) -> bool) -> Option<usize>{
         empty_is_none(buf)?;
         let first = buf.char_at(pos);
         let pos = pos.saturating_sub(1);
@@ -261,30 +261,30 @@ pub mod motions {
         Some(pos - back)
     }
 
-    pub(crate) fn word_end_backward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_end_backward(buf: &BufferInner, pos: usize) -> Option<usize> {
         word_end_backward_base(buf, pos, <char as Word>::eq_super)
     }
 
-    pub(crate) fn word_end_subset_backward(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn word_end_subset_backward(buf: &BufferInner, pos: usize) -> Option<usize> {
         word_end_backward_base(buf, pos, <char as Word>::eq_sub)
     }
 
-    pub(crate) fn start_of_line(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn start_of_line(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         Some(buf.chars_bck(pos).enumerate().filter(|&(_, c)| c == '\n').nth(0).map_or(0, |(i, _)| pos - i))
     }
 
-    pub(crate) fn end_of_line(buf: &Buffer, pos: usize) -> Option<usize> {
+    pub(crate) fn end_of_line(buf: &BufferInner, pos: usize) -> Option<usize> {
         empty_is_none(buf)?;
         Some(buf.chars_fwd(pos).enumerate().filter(|&(_, c)| c == '\n').nth(0)
             .map_or(buf.len().saturating_sub(1), |(i, _)| pos + i.saturating_sub(1)))
     }
 
-    pub(crate) fn end_of_buffer(buf: &Buffer, _pos: usize) -> Option<usize> {
+    pub(crate) fn end_of_buffer(buf: &BufferInner, _pos: usize) -> Option<usize> {
         buf.len().checked_sub(1)
     }
 
-    pub(crate) fn start_of_buffer(buf: &Buffer, _pos: usize) -> Option<usize> {
+    pub(crate) fn start_of_buffer(buf: &BufferInner, _pos: usize) -> Option<usize> {
         if buf.len() == 0 {
             None
         } else {
@@ -299,7 +299,7 @@ pub mod motions {
 
         use super::*;
 
-        fn print_pos(buf: &Buffer, pos: usize) -> String {
+        fn print_pos(buf: &BufferInner, pos: usize) -> String {
             let slice_start = pos.saturating_sub(5);
             let slice_end = pos.add(5).min(buf.len());
             let s = buf.to_string().replace('\n', "$");
@@ -337,7 +337,7 @@ pub mod motions {
                 motion_test!(@check $motion @ $pos, $str => Some(expected));
             };
             (@check $motion:ident @ $pos:expr, $str:expr => $res:expr) => {
-                let buf = Buffer::from_str($str);
+                let buf = BufferInner::from_str($str);
                 let res = motions::$motion(&buf, $pos);
                 if let Some(expected) = $res {
                     if let Some(res) = res {
@@ -490,7 +490,7 @@ pub mod motions {
 //     }
 // }
 
-pub fn inner_word(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_word(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     let first = buf.char_at(pos);
     let start = buf
         .chars_bck(pos).enumerate()
@@ -507,7 +507,7 @@ pub fn inner_word(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
     Some(start..end)
 }
 
-pub fn a_word(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_word(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     let mut found_white_space = buf.char_at(pos).is_whitespace();
     let start = pos - buf.chars_bck(pos).take_while(|c| c.is_whitespace()).count().saturating_sub(1);
     let pos = pos + buf.chars_fwd(pos).take_while(|c| c.is_whitespace()).count();
@@ -551,11 +551,11 @@ pub fn a_word(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
     Some(start..end)
 }
 
-pub fn inner_paragraph(_buf: &Buffer, _pos: usize) -> Option<Range<usize>> {
+pub fn inner_paragraph(_buf: &BufferInner, _pos: usize) -> Option<Range<usize>> {
     todo!()
 }
 
-pub fn inner_sentence(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_sentence(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     let mut cnt = 1;
     let start = buf
         .chars_bck(pos).enumerate()
@@ -583,7 +583,7 @@ pub fn inner_sentence(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
     Some(start..end)
 }
 
-pub fn a_sentence(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_sentence(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     let mut cnt = 1;
     let start = buf
         .chars_bck(pos).enumerate()
@@ -610,58 +610,58 @@ pub fn a_sentence(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
     }
     Some(start..end)
 }
-pub fn inner_paren(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_paren(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '(', ')', true)
 }
 
-pub fn a_paren(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_paren(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '(', ')', false)
 }
 
-pub fn inner_curly(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_curly(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '{', '}', true)
 }
 
-pub fn a_curly(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_curly(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '{', '}', false)
 }
 
-pub fn inner_bracket(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_bracket(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '[', ']', true)
 }
 
-pub fn a_bracket(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_bracket(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '[', ']', false)
 }
 
-pub fn inner_quote(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_quote(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '"', '"', true)
 }
 
-pub fn a_quote(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_quote(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '"', '"', false)
 }
 
-pub fn inner_tick(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_tick(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '\'', '\'', true)
 }
 
-pub fn a_tick(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_tick(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '\'', '\'', false)
 }
 
-pub fn inner_backtick(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn inner_backtick(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '`', '`', true)
 }
 
-pub fn a_backtick(buf: &Buffer, pos: usize) -> Option<Range<usize>> {
+pub fn a_backtick(buf: &BufferInner, pos: usize) -> Option<Range<usize>> {
     delim_text_object(buf, pos, '`', '`', false)
 }
 
 // FIXME: it can't handle "[]S[]" (starting at 'S')
 #[inline(always)]
 fn delim_text_object(
-    buf: &Buffer,
+    buf: &BufferInner,
     pos: usize,
     open: char,
     close: char,
@@ -678,9 +678,8 @@ fn delim_text_object(
                         do_skip = true
                     }
                     return false;
-                } else {
-                    right_stack -= 1;
-                };
+                } 
+                right_stack -= 1;
             } else if c.1 == open {
                 right_stack += 1;
             }
@@ -697,9 +696,8 @@ fn delim_text_object(
             if c.1 == open {
                 if left_stack == 0 {
                     return false;
-                } else {
-                    left_stack -= 1;
-                };
+                } 
+                left_stack -= 1;
             } else if c.1 == close {
                 left_stack += 1;
             }
@@ -727,7 +725,7 @@ mod test {
 
     use super::*;
 
-    pub fn print_cursor(buf: &Buffer, range: Range<usize>, start: usize) -> String {
+    pub fn print_cursor(buf: &BufferInner, range: Range<usize>, start: usize) -> String {
         let slice_start = range.start.min(start).saturating_sub(5);
         let slice_end = range.end.max(start).add(5).min(buf.len());
         let s = buf.to_string().replace('\n', "$");
@@ -788,7 +786,7 @@ mod test {
             obj_test!(@check $obj @ $pos, s => Some(expected..(expected + $res.len())));
         };
         (@check $obj:ident @ $pos:expr, $str:expr => $res:expr) => {
-            let buf = Buffer::from_str($str);
+            let buf = BufferInner::from_str($str);
             let res = super::$obj(&buf, $pos);
             if let Some(expected) = $res {
                 if let Some(res) = res {
