@@ -156,14 +156,15 @@ impl WindowInner {
 
     pub fn set_bounds_outer(&mut self, bounds: TermBox) {
         let start = TermPos {
-            x: bounds.start.x - self.padding.left,
-            y: bounds.start.y - self.padding.top,
+            x: bounds.start.x + self.padding.left,
+            y: bounds.start.y + self.padding.top,
         };
         let end = TermPos {
-            x: bounds.end.x + self.padding.right,
-            y: bounds.end.y + self.padding.bottom,
+            x: bounds.end.x - self.padding.right,
+            y: bounds.end.y - self.padding.bottom,
         };
-        self.bounds = TermBox { start, end }
+        self.bounds = TermBox { start, end };
+        self.bounds.assert_valid();
     }
 
     pub fn set_bounds_inner(&mut self, bounds: TermBox) {
@@ -246,6 +247,7 @@ impl WindowInner {
     fn draw_buf_colored(&self, ctx: &Ctx, buf: &BufferInner, color: Color) {
         {
             let mut tui = ctx.tui.borrow_mut();
+            debug_assert!(self.outer_bounds().is_subset_of(&tui.bounds()));
             let range = buf.cursor.topline
                 ..(buf.cursor.topline + self.height() as usize).min(buf.linecnt());
             for (y, line) in buf
@@ -262,12 +264,12 @@ impl WindowInner {
                     line,
                 );
             }
-            buf.cursor.draw(self, &mut tui)
         }
         self.components.iter().for_each(|x| x.draw(self, &buf, ctx));
     }
 
     pub fn draw_cursor(&self, tui: &mut TermGrid) {
+        debug_assert!(self.outer_bounds().is_subset_of(&tui.bounds()));
         self.buffer.get().cursor.draw(self, tui)
     }
 

@@ -20,6 +20,7 @@ use nix::sys::{
     signalfd::SigSet,
 };
 use render::Ctx;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::{
     panic::{self, PanicInfo},
@@ -49,11 +50,20 @@ fn exit() {
 }
 
 fn main_loop() {
+    let path = if let Some(file) = std::env::args().nth(1) {
+        PathBuf::from(file)
+    } else {
+        Path::new("./assets/test/passage_wrapped.txt").into()
+    };
+
     let mut ctx: Ctx = Ctx::from_file(
         libc::STDIN_FILENO,
-        Path::new("./assets/test/passage_wrapped.txt"),
+        &path
     )
     .unwrap();
+
+    guile::initialize();
+
     ctx.render();
     let mut stdin = std::io::stdin().lock();
     loop {
@@ -81,7 +91,6 @@ fn main() -> Result<(), ()> {
     // let buf = buffer::Buffer::new("./assets/test/lines.txt").unwrap();
     // let mut ctx = Ctx::from_buffer(libc::STDIN_FILENO, buf);
 
-    guile::initialize();
 
     main_loop();
 

@@ -9,6 +9,7 @@ use crate::term;
 use crate::tui::TermBox;
 use crate::tui::TermGrid;
 use crate::tui::TextSeverity;
+use crate::utils::AtomicArc;
 use crate::window::*;
 use crate::Color;
 use crate::{buffer::*, Mode};
@@ -43,8 +44,9 @@ impl BufId {
     }
 }
 
+pub static CURRENT_BUF: AtomicArc<Buffer> = AtomicArc::new();
+
 pub struct Ctx {
-    id_counter: usize,
     first_buffer: Arc<Buffer>,
     last_buffer: Arc<Buffer>,
     termios: Termios,
@@ -70,7 +72,6 @@ impl Ctx {
         let tui = TermGrid::new();
         let window = Window::new(tui.bounds(), Arc::clone(&buf));
         Self {
-            id_counter: 2,
             first_buffer: Arc::clone(&buf),
             last_buffer: Arc::clone(&buf),
             termios: termios.clone(),
@@ -110,8 +111,7 @@ impl Ctx {
             components,
             Arc::clone(&buf),
         );
-        Self {
-            id_counter: 2,
+        let mut ret = Self {
             first_buffer: Arc::clone(&buf),
             last_buffer: Arc::clone(&buf),
             termios,
@@ -121,9 +121,12 @@ impl Ctx {
             command_line: CommandLine::new(&tui),
             tui: tui.into(),
             focused_win: Arc::clone(&window),
-            focused_buf: buf,
+            focused_buf: Arc::clone(&buf),
             root: window.into(),
-        }
+        };
+        // do this to set static
+        ret.set_focused_buf(buf);
+        ret
     }
 
     pub fn cmdtype(&self) -> crate::command::cmdline::CommandType {
@@ -135,12 +138,13 @@ impl Ctx {
             let tui = self.tui.get_mut();
             if tui.resize_auto() {
                 self.command_line.reset_visual(tui);
-                self.root.fit(tui.bounds());
+                let b = tui.bounds();
+                self.root.fit(TermBox::from_ranges(b.xrng(), 0..(b.ylen() - 2)));
             }
         }
         self.command_line.take_general_input(&self.tui.get_mut());
-        let _ = self.command_line.render(self);
         self.root.draw(self);
+        let _ = self.command_line.render(self);
 
         match self.mode {
             Mode::Normal | Mode::Insert => {
@@ -161,14 +165,19 @@ impl Ctx {
         self.focused_buf.get()
     }
 
-    pub fn open_buffer(&mut self, buf: Arc<Buffer>) {
-        self.id_counter += 1;
-        if std::ptr::eq(&*self.first_buffer, &*self.last_buffer) {
-            self.first_buffer = Arc::clone(&buf);
+    /// sets the focused buffer - buffer must already have been registered
+    pub fn set_focused_buf(&mut self, buf: Arc<Buffer>) {
+        CURRENT_BUF.set(Arc::clone(&buf));
+        if std::ptr::eq(&*buf, &*self.focused_buf) {
+            return
         }
-        self.last_buffer = Arc::clone(&buf);
         self.focused_buf = Arc::clone(&buf);
         self.focused_win.get_mut().buffer = buf;
+    }
+
+    pub fn open_buffer(&mut self, buf: Arc<Buffer>) {
+        self.last_buffer = Arc::clone(&buf);
+        self.set_focused_buf(buf);
         self.tui.borrow_mut().clear();
     }
 
@@ -206,6 +215,9 @@ impl Ctx {
                 drop(buf);
                 self.focused_win.get_mut().set_pos(pos);
             }
+            Motion::CustomMotion(_scm) => {
+                todo!()
+            },
         }
         let buf = self.focused_buf.get_mut();
         let end = buf.cursor.pos;

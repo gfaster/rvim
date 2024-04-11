@@ -12,6 +12,8 @@ macro_rules! unit_err {
     };
 }
 
+use std::sync::{Arc, Mutex};
+
 pub(crate) use unit_err;
 
 /*
@@ -40,3 +42,22 @@ mod heavy_rw {
     }
 }
 */
+
+/// TODO: improve this implementation
+pub struct AtomicArc<T> {
+    inner: Mutex<Option<Arc<T>>>,
+}
+
+impl<T> AtomicArc<T> {
+    pub const fn new() -> Self {
+        AtomicArc { inner: Mutex::new(None) }
+    }
+
+    pub fn set(&self, item: Arc<T>) {
+        *self.inner.lock().expect("implementation of Arc::clone failed") = Some(item)
+    }
+
+    pub fn get(&self) -> Option<Arc<T>> {
+        self.inner.lock().expect("implementation of Arc::clone failed").clone()
+    }
+}

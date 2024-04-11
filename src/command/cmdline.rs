@@ -48,27 +48,28 @@ pub struct CommandLine {
 }
 
 impl CommandLine {
-    pub fn take_general_input(&mut self, _tui: &TermGrid) {
+    pub fn take_general_input(&mut self, tui: &TermGrid) {
         while let Ok(msg) = self.msg_rx.try_recv() {
             self.set_mode(CommandLineMode::Output);
             let s: &str = match &msg {
                 CmdMsg::Str(s) => s,
                 CmdMsg::Gmsg(s) => s,
             };
-            log!("{s:?}");
+            // log!("{s:?}");
             self.output_severity = crate::tui::TextSeverity::Normal;
             let mut buf = self.buf.get_mut();
             buf.insert_str(s);
         }
 
         // move this to rendering
-        // if buf.linecnt() > 1 {
-        //     let (w, h) = tui.dim();
-        //     let lncnt = buf.linecnt() as u32;
-        //     let mut win = self.window.get_mut();
-        //     win.set_size_inner(w, h - lncnt.max(h - 4));
-        //     win.snap_to_bottom(tui);
-        // }
+        let buf = self.buf.get();
+        if buf.linecnt() > 1 {
+            let (w, h) = tui.dim();
+            let lncnt = buf.linecnt() as u32;
+            let top = h - (lncnt + 1).min(h - 1);
+            let mut win = self.window.get_mut();
+            win.set_bounds_outer(TermBox::from_ranges(0..w, top..h));
+        }
     }
 
     pub fn render(&self, ctx: &Ctx) -> std::fmt::Result {
@@ -187,11 +188,9 @@ impl CommandLine {
 
     /// resize to fit window and reset to original size
     pub fn reset_visual(&mut self, tui: &TermGrid) {
-        let (w, _h) = tui.dim();
+        let (w, h) = tui.dim();
         let mut win = self.window.get_mut();
-        win.set_size_outer(w, 2);
-        win.snap_to_bottom(&tui.bounds());
-        // debug_assert_eq!(self.window.bounds(), TermBox::from_ranges(1..w, (h - 2)..h))
+        win.set_bounds_outer(TermBox::from_ranges(0..w, (h-2)..h));
     }
 
     /// sends a message to the command line output, and will be displayed on next render call. This

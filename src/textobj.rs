@@ -1,6 +1,6 @@
 use std::ops::{Range, RangeBounds};
 
-use crate::prelude::*;
+use crate::{guile::ProtectedScm, prelude::*};
 
 /// Enum of the various types of motions, using a trait object because that feels more semantically
 /// appropriate
@@ -12,6 +12,7 @@ pub enum Motion {
     BufferSpace { doff: isize },
     TextObj(TextObject),
     TextMotion(TextMotion),
+    CustomMotion(ProtectedScm),
 }
 
 // keeping position as separate argument for potential future proofing

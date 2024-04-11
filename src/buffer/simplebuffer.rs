@@ -4,7 +4,7 @@ use std::{
     default,
     ops::Range,
     os::unix::prelude::OsStrExt,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, sync::{atomic::{AtomicBool, Ordering}, RwLock},
 };
 
 use super::{BufCore, DocPos};
@@ -12,9 +12,9 @@ use super::{BufCore, DocPos};
 pub struct SimpleBuffer {
     data: String,
     path: Option<PathBuf>,
-    lines: RefCell<Vec<usize>>,
+    lines: RwLock<Vec<usize>>,
     name: String,
-    outdated_lines: Cell<bool>,
+    outdated_lines: AtomicBool,
 }
 
 impl super::BufCore for SimpleBuffer {
@@ -23,7 +23,7 @@ impl super::BufCore for SimpleBuffer {
             data: String::new(),
             lines: Vec::new().into(),
             outdated_lines: true.into(),
-            name: "new simple buffer".to_string(),
+            name: "[ new simple buffer ]".to_string(),
             path: None,
         }
     }
@@ -33,7 +33,7 @@ impl super::BufCore for SimpleBuffer {
     }
 
     fn open(file: &std::path::Path) -> std::io::Result<Self> {
-        let name = String::from_utf8_lossy(file.file_name().map_or(b"file", |os| os.as_bytes()))
+        let name = String::from_utf8_lossy(file.file_name().map_or(b"[file]", |os| os.as_bytes()))
             .to_string();
         Ok(Self {
             path: Some(file.to_owned()),
@@ -73,7 +73,7 @@ impl super::BufCore for SimpleBuffer {
 
     fn delete_char(&mut self, off: usize) -> char {
         let c = self.data.remove(off);
-        self.outdated_lines.set(true);
+        *self.outdated_lines.get_mut() = true;
         c
     }
 
@@ -84,7 +84,7 @@ impl super::BufCore for SimpleBuffer {
     fn insert_str(&mut self, ctx: &mut Cursor, s: &str) {
         let off = self.pos_to_offset(ctx.pos);
         self.data.insert_str(off, s);
-        self.outdated_lines.set(true);
+        *self.outdated_lines.get_mut() = true;
         let new_off = off + s.len();
         if s.contains('\n') {
             self.update_bufctx(ctx, new_off);
@@ -105,7 +105,7 @@ impl super::BufCore for SimpleBuffer {
     fn clear(&mut self, ctx: &mut Cursor) {
         self.data.clear();
         *ctx = Cursor::new();
-        self.outdated_lines.set(true);
+        *self.outdated_lines.get_mut() = true;
     }
 
     fn set_path(&mut self, path: std::path::PathBuf) {
@@ -115,7 +115,7 @@ impl super::BufCore for SimpleBuffer {
     fn delete_range(&mut self, range: Range<usize>) -> String {
         let old = self.data[range.clone()].to_owned();
         self.data.replace_range(range, "");
-        self.outdated_lines.set(true);
+        *self.outdated_lines.get_mut() = true;
         old
     }
 
@@ -168,9 +168,13 @@ impl super::BufCore for SimpleBuffer {
 // helpers
 impl SimpleBuffer {
     fn line_nums<'a>(&'a self) -> impl std::ops::Deref<Target = Vec<usize>> + 'a {
-        if self.outdated_lines.get() {
-            self.outdated_lines.set(false);
-            let mut lines = self.lines.borrow_mut();
+        'update: {if self.outdated_lines.load(Ordering::Acquire) {
+            let mut lines = match self.lines.try_write() {
+                Err(std::sync::TryLockError::Poisoned(e)) => panic!("{e}"),
+                Err(std::sync::TryLockError::WouldBlock) => break 'update,
+                Ok(l) => l,
+            };
+
             lines.clear();
             let mut sum = 0;
             lines.extend(self.data.lines_inclusive().map(str::len).map(|l| {
@@ -178,9 +182,11 @@ impl SimpleBuffer {
                 sum += l;
                 ret
             }));
+            self.outdated_lines.store(false, Ordering::Release);
             drop(lines)
         }
-        self.lines.borrow()
+        }
+        self.lines.read().unwrap()
     }
 
     fn update_bufctx(&self, ctx: &mut Cursor, new_off: usize) {

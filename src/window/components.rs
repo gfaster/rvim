@@ -148,7 +148,7 @@ impl DispComponent for StatusLine {
         }
     }
 
-    fn draw(&self, win: &WindowInner, buffer: &BufferInner, ctx: &Ctx) {
+    fn draw(&self, win: &WindowInner, _buffer: &BufferInner, ctx: &Ctx) {
         let base = win.reltoabs(TermPos { x: 0, y: 0 });
 
         let (color, mode_str) = match ctx.mode {
@@ -182,7 +182,8 @@ impl DispComponent for StatusLine {
         let y = base.y - 1;
         let mut refline = target.refline(y, ..).colored(color);
         write!(refline, "{mode_str}").unwrap();
-        let name = buffer.name();
+        let buf = ctx.focused_buf();
+        let name = buf.name();
         refline.set_color(Color {
             bg: BasicColor::Black,
             ..Color::default()

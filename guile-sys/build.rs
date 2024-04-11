@@ -59,6 +59,8 @@ fn main() {
         .allowlist_function("scm_.*")
         .allowlist_var("scm_.*")
         .allowlist_var("SCM_.*")
+        .blocklist_type("SCM")
+        .allowlist_function("guile_sys_.*")
         .generate()
         .expect("Unable to generate bindings.");
 

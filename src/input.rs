@@ -181,7 +181,7 @@ mod syn {
             rem.clear();
             idx += 1;
         }
-        return None;
+        None
     }
 
     pub(super) fn parse_normal_command(reader: &mut impl Read) -> Option<super::Action> {
